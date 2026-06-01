@@ -39,3 +39,8 @@ Thumbs.db
 # Dev logs
 .dashboard-dev.*
 *.log
+
+# Vercel
+.vercel
+
+.vercel

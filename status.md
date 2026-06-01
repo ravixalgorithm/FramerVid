@@ -104,7 +104,7 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 | Unit / integration tests | [ ] | |
 | `pnpm typecheck` clean | [~] | Run after changes |
 | CI (GitHub Actions) | [x] | typecheck + dashboard build |
-| Production deploy (live) | [ ] | Follow `DEPLOY.md` — Vercel + Fly + R2 + Supabase |
+| Production deploy (live) | [~] | Dashboard on Vercel — add `DATABASE_URL`, `REDIS_URL`, R2 in project settings; Fly worker pending |
 | Resend email | [ ] | |
 | Stripe / billing | [ ] | |
 

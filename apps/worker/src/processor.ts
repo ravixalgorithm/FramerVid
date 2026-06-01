@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { db, videos } from '@framevid/db';
 import { eq } from 'drizzle-orm';
-import { connection, TRANSCODE_QUEUE_NAME, type TranscodeJobData } from '@framevid/queue';
+import { getQueueConnection, TRANSCODE_QUEUE_NAME, type TranscodeJobData } from '@framevid/queue';
 import dotenv from 'dotenv';
 import {
   downloadRawFromR2,
@@ -253,7 +253,7 @@ const worker = new Worker<TranscodeJobData>(
   async (job) => {
     await processTranscodeJob(job);
   },
-  { connection: connection as any }
+  { connection: getQueueConnection() as any }
 );
 
 worker.on('completed', (job) => {

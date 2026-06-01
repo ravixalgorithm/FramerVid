@@ -1,5 +1,26 @@
 # Deploy FrameVid to Production
 
+## Current production (dashboard)
+
+| Item | Value |
+|------|--------|
+| **GitHub** | https://github.com/ravixalgorithm/FramerVid |
+| **Vercel production URL** | https://dashboard-alpha-kohl-78.vercel.app |
+| **Health check** | https://dashboard-alpha-kohl-78.vercel.app/api/health |
+| **Framer API base** | `https://dashboard-alpha-kohl-78.vercel.app/api/v1` |
+
+Vercel project: `ravixalgorithms-projects/dashboard` — **Root Directory:** `apps/dashboard` (required for monorepo).
+
+**Still required for full `ok` health:** add in [Vercel → Project → Environment Variables](https://vercel.com/ravixalgorithms-projects/dashboard/settings/environment-variables):
+
+- `DATABASE_URL` (Supabase/Neon Postgres)
+- `REDIS_URL` (Upstash `rediss://...`)
+- `CLOUDFLARE_R2_*` (all five vars from `.env.production.example`)
+
+Then run `packages/db/drizzle/0000_init.sql` on the database and redeploy.
+
+---
+
 Production layout (from PRD):
 
 | Service | Platform | Purpose |
