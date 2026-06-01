@@ -1,0 +1,18 @@
+# Fly.io transcoding worker — deploy from repo root:
+#   fly launch --config fly.worker.toml --no-deploy
+#   fly secrets set DATABASE_URL=... REDIS_URL=... (see DEPLOY.md)
+#   fly deploy --config fly.worker.toml
+
+app = "framevid-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "performance-4x"
+  memory = "8192mb"
+  cpus = 4

@@ -1,0 +1,194 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 225 28% 97%;
+    --foreground: 220 18% 8%;
+    --surface: 0 0% 100%;
+    --muted: 220 8% 46%;
+    --hairline: 220 13% 90%;
+    --accent: 24 95% 53%;
+  }
+
+  body {
+    @apply bg-[hsl(var(--background))] text-[hsl(var(--foreground))] font-sans antialiased;
+    background-image:
+      linear-gradient(rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  ::selection {
+    @apply bg-orange-500 text-white;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-gray-950 px-4 text-[13px] font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.16)] transition duration-200 hover:-translate-y-0.5 hover:bg-gray-800 hover:shadow-[0_16px_34px_rgba(15,23,42,0.20)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-950 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-orange {
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-orange-500 px-4 text-[13px] font-semibold text-white shadow-[0_4px_12px_rgba(249,115,22,0.2)] transition duration-200 hover:-translate-y-0.5 hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-secondary {
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-gray-200 bg-white px-4 text-[13px] font-semibold text-gray-800 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-950;
+  }
+
+  .surface {
+    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+  }
+
+  .dashboard-panel {
+    @apply overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_18px_50px_rgba(15,23,42,0.06)];
+  }
+
+  .studio-panel {
+    @apply relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_22px_60px_rgba(15,23,42,0.08)];
+    background:
+      linear-gradient(135deg, rgba(0, 85, 255, 0.08), transparent 34%),
+      linear-gradient(225deg, rgba(255, 51, 102, 0.08), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  }
+
+  .studio-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(15, 23, 42, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: linear-gradient(90deg, rgba(0,0,0,0.75), transparent 78%);
+  }
+
+  .component-preview {
+    @apply relative overflow-hidden rounded-xl border border-gray-200 bg-gray-950 text-white shadow-[0_24px_70px_rgba(15,23,42,0.26)];
+  }
+
+  .component-preview::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(120deg, rgba(0, 221, 255, 0.18), transparent 36%),
+      linear-gradient(300deg, rgba(255, 51, 102, 0.20), transparent 34%),
+      linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+    background-size: auto, auto, 24px 24px, 24px 24px;
+  }
+
+  .motion-line {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .motion-line::after {
+    animation: scan-line 2.8s ease-in-out infinite;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.95), transparent);
+    content: "";
+    height: 100%;
+    left: -30%;
+    position: absolute;
+    top: 0;
+    width: 30%;
+  }
+
+  .input-minimal {
+    @apply w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-950 outline-none transition duration-200 placeholder:text-gray-400 focus:border-gray-400 focus:ring-4 focus:ring-gray-950/5;
+  }
+
+  .nav-item {
+    @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-[13px] font-semibold transition duration-200;
+  }
+
+  .nav-item-active {
+    @apply bg-gray-950 text-white shadow-[0_12px_24px_rgba(15,23,42,0.18)];
+  }
+
+  .nav-item-inactive {
+    @apply text-gray-500 hover:bg-gray-100 hover:text-gray-950;
+  }
+
+  .icon-button {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 shadow-sm transition duration-200 hover:border-gray-300 hover:text-gray-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-950;
+  }
+
+  .video-thumb {
+    @apply relative overflow-hidden rounded-lg bg-gray-950;
+  }
+
+  .video-thumb-fallback {
+    background:
+      linear-gradient(135deg, rgba(255,255,255,0.10) 0 25%, transparent 25% 50%, rgba(255,255,255,0.08) 50% 75%, transparent 75%),
+      linear-gradient(135deg, #111827 0%, #1f2937 55%, #0f172a 100%);
+    background-size: 18px 18px, auto;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .animate-in-up {
+    animation: in-up 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .animate-soft-pulse {
+    animation: soft-pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes in-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scan-line {
+    0%, 18% {
+      transform: translateX(0);
+      opacity: 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    74%, 100% {
+      transform: translateX(430%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes soft-pulse {
+    0%, 100% {
+      opacity: 0.72;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.08);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-in-up,
+    .animate-soft-pulse,
+    .motion-line::after {
+      animation: none;
+    }
+  }
+}

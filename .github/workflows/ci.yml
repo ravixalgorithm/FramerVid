@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @framevid/queue build
+      - run: pnpm --filter @framevid/db build
+      - run: pnpm --filter @framevid/types build
+      - run: pnpm typecheck
+
+  build-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @framevid/types build
+      - run: pnpm --filter @framevid/db build
+      - run: pnpm --filter @framevid/queue build
+      - run: pnpm --filter @framevid/dashboard build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/framevid
+          JWT_SECRET: ci-build-secret-key-minimum-32-chars
+          REDIS_URL: redis://localhost:6379

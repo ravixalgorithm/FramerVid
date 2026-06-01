@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @framevid/types build && pnpm --filter @framevid/db build && pnpm --filter @framevid/queue build && pnpm --filter @framevid/dashboard build"
+}

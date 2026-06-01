@@ -1,0 +1,28 @@
+{
+  "name": "@framevid/component",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@framevid/types": "workspace:*",
+    "framer-motion": "^11.0.0"
+  },
+  "peerDependencies": {
+    "framer": "^2.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "framer": "^2.4.1",
+    "hls.js": "^1.5.8",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.4.5"
+  }
+}

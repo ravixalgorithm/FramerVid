@@ -1,0 +1,28 @@
+{
+  "name": "@framevid/worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/processor.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node ./dist/processor.js",
+    "dev": "tsx watch src/processor.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.554.0",
+    "@framevid/db": "workspace:*",
+    "@framevid/queue": "workspace:*",
+    "@framevid/types": "workspace:*",
+    "bullmq": "^5.7.8",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.30.9",
+    "ioredis": "^5.4.1",
+    "postgres": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5"
+  }
+}
