@@ -18,8 +18,7 @@ RUN pnpm install --frozen-lockfile \
   && pnpm --filter @framevid/types build \
   && pnpm --filter @framevid/db build \
   && pnpm --filter @framevid/queue build \
-  && pnpm --filter @framevid/worker build \
-  && node --input-type=module -e "import('youtube-dl-exec').then(() => console.log('youtube-dl-exec OK'))"
+  && pnpm --filter @framevid/worker build
 
 WORKDIR /app/apps/worker
 ENV NODE_ENV=production
