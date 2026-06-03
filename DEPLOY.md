@@ -75,18 +75,26 @@ psql "$DATABASE_URL" -f packages/db/drizzle/0000_init.sql
 2. Create R2 API token with read/write on that bucket.
 3. Enable public access via custom domain, e.g. `cdn.framevid.co`:
    - R2 → bucket → Settings → Custom Domains
-4. CORS (allow browser uploads + HLS playback):
+4. **CORS** (required for **Upload Video** from the browser — without this only URL import works):
+
+R2 → your bucket → **Settings** → **CORS policy**:
 
 ```json
 [
   {
-    "AllowedOrigins": ["*"],
+    "AllowedOrigins": [
+      "https://framer-vid-dashboard.vercel.app",
+      "http://localhost:3000"
+    ],
     "AllowedMethods": ["GET", "PUT", "HEAD"],
     "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
   }
 ]
 ```
+
+Add every Vercel preview/production URL you use. `AllowedOrigins: ["*"]` also works for testing.
 
 5. Set env vars:
    - `CLOUDFLARE_R2_ACCOUNT_ID`
@@ -261,6 +269,16 @@ Replace with your Render URL from the dashboard.
 
 - **More reliable:** change instance **Free → Starter** (~$7/mo) on the same web service.
 - **Cleaner prod:** recreate as **Background Worker** + Starter (no cron ping needed).
+
+### 7. Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| **URL import works, file upload fails** | R2 **CORS** (above) + redeploy Vercel after latest upload fix |
+| **No logs on Render** | Service is **asleep** (free tier) — open `/health`, wait 1 min, check **Logs** tab while uploading |
+| **No logs at all** | Render → **Events** — deploy failed? Env vars missing? |
+| **Logs show Redis failed** | `REDIS_URL` on Render must match Vercel (same Upstash URL) |
+| **Upload OK, stuck processing** | Wake worker; confirm logs show `Listening on queue "video-transcode"` |
 
 ---
 

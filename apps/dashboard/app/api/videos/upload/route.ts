@@ -26,6 +26,8 @@ const uploadSchema = z.object({
   originalFilename: z.string().min(1).max(255),
   workspaceId: z.string().uuid(),
   sizeBytes: z.number().int().positive().optional(),
+  /** Must match the Content-Type header on the browser PUT or R2 rejects the upload. */
+  contentType: z.string().min(1).max(127).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -41,7 +43,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.errors[0]?.message || 'Validation error', code: 'VALIDATION_ERROR' }, { status: 400 });
     }
 
-    const { title, originalFilename, workspaceId, sizeBytes } = parsed.data;
+    const { title, originalFilename, workspaceId, sizeBytes, contentType } = parsed.data;
+    const uploadContentType = contentType || 'application/octet-stream';
 
     if (!(await assertWorkspaceAccess(user.id, workspaceId, ['admin', 'editor']))) {
       return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
@@ -124,6 +127,7 @@ export async function POST(req: NextRequest) {
         const command = new PutObjectCommand({
           Bucket: BUCKET_NAME,
           Key: rawKey,
+          ContentType: uploadContentType,
         });
         uploadUrl = await getSignedUrl(r2, command, { expiresIn: 3600 }); // 1 hour expiry
       } catch (err) {
@@ -141,6 +145,7 @@ export async function POST(req: NextRequest) {
         video: newVideo,
         uploadUrl,
         rawKey,
+        contentType: uploadContentType,
       },
     });
 

@@ -307,13 +307,15 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
           originalFilename: file.name,
           workspaceId,
           sizeBytes: file.size,
+          contentType: file.type || 'application/octet-stream',
         }),
       });
 
       const initPayload = await initRes.json();
       if (!initRes.ok) throw new Error(initPayload.error || 'Failed to initiate upload');
 
-      const { video, uploadUrl, rawKey } = initPayload.data;
+      const { video, uploadUrl, rawKey, contentType } = initPayload.data;
+      const putContentType = contentType || file.type || 'application/octet-stream';
       setVideos((prev) => [video, ...prev]);
 
       const xhr = new XMLHttpRequest();
@@ -332,10 +334,26 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
           setTimeRemaining(remainingSec > 60 ? `${Math.floor(remainingSec / 60)}m ${remainingSec % 60}s left` : `${remainingSec}s left`);
         };
 
-        xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error(`Upload failed with status code: ${xhr.status}`)));
-        xhr.onerror = () => reject(new Error('Network error during upload'));
+        xhr.onload = () => {
+          if (xhr.status === 200) resolve();
+          else {
+            reject(
+              new Error(
+                xhr.status === 403
+                  ? 'Upload blocked (403). Check R2 CORS on your bucket for this site.'
+                  : `Upload failed with status ${xhr.status}`
+              )
+            );
+          }
+        };
+        xhr.onerror = () =>
+          reject(
+            new Error(
+              'Network error during upload. Check R2 CORS allows PUT from your dashboard URL.'
+            )
+          );
         xhr.open('PUT', uploadUrl);
-        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.setRequestHeader('Content-Type', putContentType);
         xhr.send(file);
       });
 

@@ -19,6 +19,22 @@ dotenv.config();
 
 startHealthServer();
 
+console.log('[Worker] Booting FrameVid worker', {
+  node: process.version,
+  redis: Boolean(process.env.REDIS_URL),
+  database: Boolean(process.env.DATABASE_URL),
+  r2: Boolean(process.env.CLOUDFLARE_R2_ACCOUNT_ID),
+});
+
+void (async () => {
+  try {
+    const pong = await getQueueConnection().ping();
+    console.log(`[Worker] Redis ping: ${pong}`);
+  } catch (err) {
+    console.error('[Worker] Redis connection failed — jobs will not run:', err);
+  }
+})();
+
 async function checkFFmpegExists(): Promise<boolean> {
   try {
     const { exec } = await import('child_process');
@@ -376,10 +392,14 @@ worker.on('completed', (job) => {
 });
 
 worker.on('failed', (job, err) => {
-  console.error(`[Worker] Job ${job?.id} failed: ${err.message}`);
+  console.error(`[Worker] Job ${job?.id} failed:`, err);
 });
 
-console.log('[Worker] Transcoding queue listener started.');
+worker.on('error', (err) => {
+  console.error('[Worker] Transcode queue error:', err);
+});
+
+console.log(`[Worker] Listening on queue "${TRANSCODE_QUEUE_NAME}"`);
 
 async function processImportJob(job: { data: ImportJobData }) {
   const { videoId, workspaceId, url } = job.data;
@@ -480,10 +500,14 @@ importWorker.on('completed', (job) => {
 });
 
 importWorker.on('failed', (job, err) => {
-  console.error(`[Worker] Import Job ${job?.id} failed: ${err.message}`);
+  console.error(`[Worker] Import job ${job?.id} failed:`, err);
 });
 
-console.log('[Worker] Import queue listener started.');
+importWorker.on('error', (err) => {
+  console.error('[Worker] Import queue error:', err);
+});
+
+console.log(`[Worker] Listening on queue "${IMPORT_QUEUE_NAME}"`);
 
 async function shutdown(signal: string) {
   console.log(`[Worker] ${signal} received, closing workers...`);
