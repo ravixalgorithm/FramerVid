@@ -13,8 +13,11 @@ import {
   isR2Configured,
 } from './r2.js';
 import { extractAndUploadAudio } from './deepgram.js';
+import { startHealthServer } from './health-server.js';
 
 dotenv.config();
+
+startHealthServer();
 
 async function checkFFmpegExists(): Promise<boolean> {
   try {

@@ -178,28 +178,36 @@ Upload a video in the dashboard → logs should show `[Worker] Started transcode
 
 **Recommended if you want online without Fly/Oracle.** Keep the dashboard on Vercel; only the worker runs on Render.
 
-| Render plan | Behavior | Cost |
-|-------------|----------|------|
-| **Free** | Background worker stays up and polls Redis (does **not** spin down like free *web* services). ~750 instance-hours/month (~one worker 24/7). Occasional restarts; may suspend if you exceed free hours/bandwidth. | $0 |
-| **Starter** | Always on, more RAM (better for FFmpeg), no monthly hour cap worry | ~$7/mo per worker |
+> **Important:** Render **free** plans do **not** support **Background Workers** (`service type is not available for this plan`). Use the **Web Service** blueprint in `render.yaml` (free), or pay **Starter ~$7/mo** for a real Background Worker.
 
-Paid Render Starter is **enough** for this app (one worker, BullMQ, FFmpeg). You do not need Fly unless you want multi-region.
+| Render setup | Behavior | Cost |
+|--------------|----------|------|
+| **Web Service + Free** (this repo’s `render.yaml`) | Worker + `/health` HTTP. Spins down after **15 min** no traffic; wakes in ~1 min. Use a free cron ping (below) to stay warm for trials. | $0 |
+| **Background Worker + Starter** | Always on, polls Redis 24/7, better for production | ~$7/mo |
+
+Paid Render Starter is **enough** for production (one worker, BullMQ, FFmpeg).
 
 ### 1. Create the worker service
 
-**Option A — Blueprint (easiest)**
+**Option A — Blueprint (free web service)**
 
-1. Push latest `master` to GitHub (includes `render.yaml` + fixed `Dockerfile.worker`).
-2. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint** → connect **FramerVid** repo.
-3. Apply the blueprint → service `framevid-worker` is created.
+1. Pull latest `master` (includes `render.yaml` as **type: web**).
+2. [dashboard.render.com](https://dashboard.render.com) → delete any failed `framevid-worker` from the first blueprint attempt.
+3. **New +** → **Blueprint** → connect **FramerVid** → Apply.
+4. Service `framevid-worker` is created as a **Web Service** (Docker).
 
-**Option B — Manual**
+**Option B — Manual (free)**
 
-1. **New +** → **Background Worker**
+1. **New +** → **Web Service** (not Background Worker)
 2. Connect GitHub repo **FramerVid**
-3. **Runtime:** Docker
-4. **Dockerfile path:** `Dockerfile.worker` (repo root)
-5. **Plan:** Free (upgrade to Starter when transcodes OOM or you go prod)
+3. **Runtime:** Docker · **Dockerfile:** `Dockerfile.worker` · **Plan:** Free
+4. **Health Check Path:** `/health`
+
+**Option C — Paid background worker (~$7/mo)**
+
+1. **New +** → **Background Worker** → Docker → `Dockerfile.worker`
+2. **Instance type:** Starter (not Free)
+3. Add payment method in Render billing if prompted
 
 ### 2. Environment variables
 
@@ -226,17 +234,28 @@ Optional later: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`.
 2. **Logs** should show: `[Worker] Transcoding queue listener started.`
 3. On Vercel → upload a short MP4 → logs: `[Worker] Started transcode job` → video **ready**.
 
-### 4. Free tier limits (trial)
+### 4. Keep free web service warm (optional, for trial)
 
-- **No idle sleep** for background workers (unlike free web services).
-- **750 hours/month** total across free services — one worker ~24/7 fits.
-- **512 MB RAM** on free — long 1080p transcodes may OOM → upgrade worker to **Starter**.
-- Render may **restart** free services without notice (jobs retry via BullMQ).
-- Card only needed if you exceed free bandwidth or choose paid plans.
+Free web services **sleep after 15 minutes** without HTTP traffic. While asleep, the worker does not process Redis jobs.
 
-### 5. Upgrade path
+Use a free external cron to ping `/health` every 10–14 minutes, e.g. [cron-job.org](https://cron-job.org):
 
-When ready: worker service → **Settings** → change plan **Free → Starter** (~$7/mo). No code changes.
+```text
+GET https://YOUR-SERVICE.onrender.com/health
+```
+
+Replace with your Render URL from the dashboard.
+
+### 5. Free tier limits (trial)
+
+- **750 instance hours/month** across free services.
+- **512 MB RAM** — long 1080p transcodes may OOM → upgrade to **Starter**.
+- Render may **restart** services without notice (BullMQ retries jobs).
+
+### 6. Upgrade path
+
+- **More reliable:** change instance **Free → Starter** (~$7/mo) on the same web service.
+- **Cleaner prod:** recreate as **Background Worker** + Starter (no cron ping needed).
 
 ---
 
