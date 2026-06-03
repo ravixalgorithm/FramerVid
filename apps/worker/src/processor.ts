@@ -387,6 +387,10 @@ const worker = new Worker<TranscodeJobData>(
   { connection: getQueueConnection() as any }
 );
 
+worker.on('active', (job) => {
+  console.log(`[Worker] Active transcode job ${job.id} videoId=${job.data.videoId}`);
+});
+
 worker.on('completed', (job) => {
   console.log(`[Worker] Completed job ${job.id}`);
 });
@@ -494,6 +498,10 @@ const importWorker = new Worker<ImportJobData>(
   },
   { connection: getQueueConnection() as any }
 );
+
+importWorker.on('active', (job) => {
+  console.log(`[Worker] Active import job ${job.id} videoId=${job.data.videoId}`);
+});
 
 importWorker.on('completed', (job) => {
   console.log(`[Worker] Completed import job ${job.id}`);

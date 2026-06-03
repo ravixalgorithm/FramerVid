@@ -7,6 +7,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getCurrentUser } from '../../../lib/auth';
 import { assertWorkspaceAccess } from '../../../lib/workspace-access';
 import { getPlanLimits } from '../../../lib/plan-limits';
+import { wakeTranscodeWorker } from '../../../lib/wake-worker';
 import type { VideoSettings } from '@framevid/types';
 
 // S3 Client configuration for direct-to-R2 uploads
@@ -138,6 +139,9 @@ export async function POST(req: NextRequest) {
     if (!uploadUrl) {
       // Mock Upload URL fallback for local development
       uploadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/videos/upload/mock-destination?key=${encodeURIComponent(rawKey)}`;
+    } else {
+      // Start waking Render worker while the browser uploads to R2 (free tier sleeps after ~15 min idle).
+      void wakeTranscodeWorker();
     }
 
     return NextResponse.json({

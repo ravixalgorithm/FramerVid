@@ -115,6 +115,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadSpeed, setUploadSpeed] = useState('');
   const [timeRemaining, setTimeRemaining] = useState('');
+  const [uploadStage, setUploadStage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Modals state
@@ -297,6 +298,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
     setUploadProgress(0);
     setUploadSpeed('');
     setTimeRemaining('');
+    setUploadStage('Preparing upload…');
 
     try {
       const initRes = await fetch('/api/videos/upload', {
@@ -318,8 +320,10 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
       const putContentType = contentType || file.type || 'application/octet-stream';
       setVideos((prev) => [video, ...prev]);
 
+      setUploadStage('Uploading to storage…');
       const xhr = new XMLHttpRequest();
       const startTime = Date.now();
+      const uploadTimeoutMs = 30 * 60 * 1000;
 
       await new Promise<void>((resolve, reject) => {
         xhr.upload.onprogress = (e) => {
@@ -335,7 +339,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         };
 
         xhr.onload = () => {
-          if (xhr.status === 200) resolve();
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
           else {
             reject(
               new Error(
@@ -352,6 +356,9 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
               'Network error during upload. Check R2 CORS allows PUT from your dashboard URL.'
             )
           );
+        xhr.ontimeout = () =>
+          reject(new Error('Upload timed out. Try a smaller file or check your connection.'));
+        xhr.timeout = uploadTimeoutMs;
         xhr.open('PUT', uploadUrl);
         xhr.setRequestHeader('Content-Type', putContentType);
         xhr.send(file);
@@ -359,6 +366,11 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
       // Real R2 uploads: queue transcode after PUT (mock endpoint queues automatically)
       if (rawKey && !uploadUrl.includes('mock-destination')) {
+        setUploadStage('Queuing transcode…');
+        setUploadProgress(100);
+        setUploadSpeed('');
+        setTimeRemaining('');
+
         const completeRes = await fetch('/api/videos/upload/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -370,17 +382,21 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         }
       }
 
+      setUploadStage('Processing on worker…');
       const refetchRes = await fetch(`/api/videos/${video.id}/meta`);
       if (refetchRes.ok) {
         const refetchPayload = await refetchRes.json();
         setVideos((prev) => prev.map((item) => (item.id === video.id ? refetchPayload.data : item)));
       }
+
+      showToast('Upload complete. Transcoding may take a few minutes on the free worker.');
     } catch (err: any) {
       toastError('Upload failed', { message: err.message });
       console.error(err);
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadStage('');
     }
   };
 
@@ -776,7 +792,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                   <div>
                     <span className="product-card-badge">Uploading</span>
                     <h3 className="product-card-title mt-4">New video</h3>
-                    <p className="product-card-subtitle">{uploadSpeed || 'Connecting…'}</p>
+                    <p className="product-card-subtitle">{uploadStage || uploadSpeed || 'Connecting…'}</p>
                     <p className="product-card-desc">{timeRemaining || 'Estimating time remaining…'}</p>
                   </div>
                   <div className="space-y-2">

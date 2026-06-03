@@ -232,6 +232,12 @@ In the worker service → **Environment**, add (same as `apps/worker/.env`):
 | `CLOUDFLARE_R2_PUBLIC_URL` | Yes (`https://pub-….r2.dev`) |
 | `NODE_ENV` | `production` |
 
+On **Vercel** (dashboard), also set:
+
+| Variable | Required |
+|----------|----------|
+| `FRAMEVID_WORKER_URL` | Yes on Render free tier — e.g. `https://framevid-worker.onrender.com` (no trailing slash). Upload APIs ping `/health` so the worker wakes before jobs run. |
+
 Do **not** set `LOCAL_UPLOAD_DIR`.
 
 Optional later: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`.
@@ -278,7 +284,8 @@ Replace with your Render URL from the dashboard.
 | **No logs on Render** | Service is **asleep** (free tier) — open `/health`, wait 1 min, check **Logs** tab while uploading |
 | **No logs at all** | Render → **Events** — deploy failed? Env vars missing? |
 | **Logs show Redis failed** | `REDIS_URL` on Render must match Vercel (same Upstash URL) |
-| **Upload OK, stuck processing** | Wake worker; confirm logs show `Listening on queue "video-transcode"` |
+| **Upload OK, stuck processing** | Set `FRAMEVID_WORKER_URL` on Vercel; wake worker (`/health`); confirm logs show `Active transcode job` |
+| **Upload never finishes (spinner)** | Browser **Network** tab: stuck `PUT` to `r2.cloudflarestorage.com` → fix **R2 CORS**; or failed `/api/videos/upload/complete` → check Vercel function logs |
 
 ---
 

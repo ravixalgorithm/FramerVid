@@ -4,6 +4,7 @@ import { db, videos, workspaceMembers } from '@framevid/db';
 import { eq, and } from 'drizzle-orm';
 import { enqueueTranscodeJob } from '@framevid/queue';
 import { getCurrentUser } from '../../../../lib/auth';
+import { wakeTranscodeWorker } from '../../../../lib/wake-worker';
 
 const completeSchema = z.object({
   videoId: z.string().uuid(),
@@ -55,12 +56,16 @@ export async function POST(req: NextRequest) {
 
     const originalFilename = rawKey.split('/').pop() || video.originalFilename;
 
-    await enqueueTranscodeJob({
+    await wakeTranscodeWorker();
+
+    const job = await enqueueTranscodeJob({
       videoId,
       workspaceId: video.workspaceId,
       rawKey,
       originalFilename,
     });
+
+    console.log('[upload/complete] Queued transcode', { videoId, jobId: job.id });
 
     await db
       .update(videos)

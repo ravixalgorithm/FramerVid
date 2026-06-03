@@ -6,6 +6,7 @@ import { enqueueImportJob } from '@framevid/queue';
 import { getCurrentUser } from '../../../lib/auth';
 import { assertWorkspaceAccess } from '../../../lib/workspace-access';
 import { getPlanLimits } from '../../../lib/plan-limits';
+import { wakeTranscodeWorker } from '../../../lib/wake-worker';
 import type { VideoSettings } from '@framevid/types';
 
 const importSchema = z.object({
@@ -87,6 +88,8 @@ export async function POST(req: NextRequest) {
     if (!newVideo) {
       throw new Error('Database insertion returned empty record.');
     }
+
+    await wakeTranscodeWorker();
 
     await enqueueImportJob({
       videoId,
