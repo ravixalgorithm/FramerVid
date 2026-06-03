@@ -12,7 +12,7 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
 
+# Smallest practical size for FFmpeg (raise if transcodes OOM).
 [[vm]]
-  size = "performance-4x"
-  memory = "8192mb"
-  cpus = 4
+  size = "shared-cpu-2x"
+  memory = "2048mb"

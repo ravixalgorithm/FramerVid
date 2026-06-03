@@ -26,7 +26,7 @@ Production layout (from PRD):
 | Service | Platform | Purpose |
 |---------|----------|---------|
 | Dashboard + API | **Vercel** | Next.js app (`apps/dashboard`) |
-| Transcoding worker | **Fly.io** | FFmpeg + BullMQ (`Dockerfile.worker`) |
+| Transcoding worker | **Render** (trial) or **Fly.io** | FFmpeg + BullMQ (`Dockerfile.worker`) |
 | Database | **Supabase** (or Neon) | Postgres |
 | Queue | **Upstash** | Redis for BullMQ |
 | Video storage | **Cloudflare R2** | Raw + HLS + thumbnails |
@@ -169,6 +169,149 @@ fly logs --app framevid-worker
 ```
 
 Upload a video in the dashboard → logs should show `[Worker] Started transcode job`.
+
+> **Fly asks for a card?** Use **§6c** (Render background worker) for trial, **§6b** (Oracle VM), or add a card on Fly.
+
+---
+
+## 6c. Deploy worker on Render (good for trial → paid later)
+
+**Recommended if you want online without Fly/Oracle.** Keep the dashboard on Vercel; only the worker runs on Render.
+
+| Render plan | Behavior | Cost |
+|-------------|----------|------|
+| **Free** | Background worker stays up and polls Redis (does **not** spin down like free *web* services). ~750 instance-hours/month (~one worker 24/7). Occasional restarts; may suspend if you exceed free hours/bandwidth. | $0 |
+| **Starter** | Always on, more RAM (better for FFmpeg), no monthly hour cap worry | ~$7/mo per worker |
+
+Paid Render Starter is **enough** for this app (one worker, BullMQ, FFmpeg). You do not need Fly unless you want multi-region.
+
+### 1. Create the worker service
+
+**Option A — Blueprint (easiest)**
+
+1. Push latest `master` to GitHub (includes `render.yaml` + fixed `Dockerfile.worker`).
+2. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint** → connect **FramerVid** repo.
+3. Apply the blueprint → service `framevid-worker` is created.
+
+**Option B — Manual**
+
+1. **New +** → **Background Worker**
+2. Connect GitHub repo **FramerVid**
+3. **Runtime:** Docker
+4. **Dockerfile path:** `Dockerfile.worker` (repo root)
+5. **Plan:** Free (upgrade to Starter when transcodes OOM or you go prod)
+
+### 2. Environment variables
+
+In the worker service → **Environment**, add (same as `apps/worker/.env`):
+
+| Variable | Required |
+|----------|----------|
+| `DATABASE_URL` | Yes |
+| `REDIS_URL` | Yes (Upstash `rediss://...`) |
+| `CLOUDFLARE_R2_ACCOUNT_ID` | Yes |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | Yes |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | Yes |
+| `CLOUDFLARE_R2_BUCKET_NAME` | Yes |
+| `CLOUDFLARE_R2_PUBLIC_URL` | Yes (`https://pub-….r2.dev`) |
+| `NODE_ENV` | `production` |
+
+Do **not** set `LOCAL_UPLOAD_DIR`.
+
+Optional later: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`.
+
+### 3. Deploy and verify
+
+1. **Manual Deploy** (or auto-deploy on push).
+2. **Logs** should show: `[Worker] Transcoding queue listener started.`
+3. On Vercel → upload a short MP4 → logs: `[Worker] Started transcode job` → video **ready**.
+
+### 4. Free tier limits (trial)
+
+- **No idle sleep** for background workers (unlike free web services).
+- **750 hours/month** total across free services — one worker ~24/7 fits.
+- **512 MB RAM** on free — long 1080p transcodes may OOM → upgrade worker to **Starter**.
+- Render may **restart** free services without notice (jobs retry via BullMQ).
+- Card only needed if you exceed free bandwidth or choose paid plans.
+
+### 5. Upgrade path
+
+When ready: worker service → **Settings** → change plan **Free → Starter** (~$7/mo). No code changes.
+
+---
+
+## 6b. Deploy worker online for $0 (Oracle Cloud Always Free)
+
+Use this when Fly/Railway need billing but you still want a **24/7** worker. Stack stays: **Vercel + Supabase + Upstash + R2** (all have free tiers).
+
+### A. Create a free VM
+
+1. [cloud.oracle.com](https://cloud.oracle.com) → sign up (verification may ask for a card; stay in **Always Free** resources only).
+2. **Compute → Instances → Create instance**
+   - Image: **Ubuntu 22.04**
+   - Shape: **Ampere** → pick **Always Free-eligible** (e.g. 2 OCPU, 12 GB RAM if available in your region)
+   - Add your SSH public key
+3. Note the instance **public IP**.
+
+### B. Install Docker on the VM
+
+SSH from your PC (`ssh ubuntu@PUBLIC_IP`):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io git
+sudo usermod -aG docker $USER
+# log out and SSH back in so docker group applies
+```
+
+### C. Build and run the worker
+
+On the VM:
+
+```bash
+git clone https://github.com/ravixalgorithm/FramerVid.git
+cd FramerVid
+```
+
+Create `worker.prod.env` (no `LOCAL_UPLOAD_DIR`):
+
+```bash
+nano worker.prod.env
+```
+
+Paste the same values as `apps/worker/.env`: `DATABASE_URL`, `REDIS_URL`, all `CLOUDFLARE_R2_*`, `NODE_ENV=production`.
+
+Build and start (from repo root):
+
+```bash
+sudo docker build -f Dockerfile.worker -t framevid-worker .
+sudo docker run -d \
+  --name framevid-worker \
+  --restart unless-stopped \
+  --env-file worker.prod.env \
+  framevid-worker
+```
+
+Logs:
+
+```bash
+sudo docker logs -f framevid-worker
+```
+
+### D. Verify end-to-end
+
+1. Vercel dashboard → upload a short MP4.
+2. VM logs: `[Worker] Started transcode job` → `Completed job`.
+3. Video status **ready**; playback uses your R2 `pub-….r2.dev` URL.
+
+### Updates
+
+```bash
+cd FramerVid && git pull
+sudo docker build -f Dockerfile.worker -t framevid-worker .
+sudo docker stop framevid-worker && sudo docker rm framevid-worker
+sudo docker run -d --name framevid-worker --restart unless-stopped --env-file worker.prod.env framevid-worker
+```
 
 ---
 

@@ -1,0 +1,16 @@
+# Render Blueprint — FrameVid transcoding worker (BullMQ + FFmpeg)
+# Dashboard stays on Vercel. Import this repo in Render or use "New > Blueprint".
+#
+# After deploy: set secret env vars in Render Dashboard (see DEPLOY.md §6c).
+
+services:
+  - type: worker
+    name: framevid-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    dockerContext: .
+    plan: free
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production

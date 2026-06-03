@@ -460,4 +460,13 @@ importWorker.on('failed', (job, err) => {
 
 console.log('[Worker] Import queue listener started.');
 
+async function shutdown(signal: string) {
+  console.log(`[Worker] ${signal} received, closing workers...`);
+  await Promise.all([worker.close(), importWorker.close()]);
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
 export { worker, importWorker };

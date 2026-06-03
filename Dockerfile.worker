@@ -22,4 +22,5 @@ RUN pnpm install --frozen-lockfile \
 
 WORKDIR /app/apps/worker
 ENV NODE_ENV=production
-CMD ["node", "dist/processor.js"]
+# Worker build emits a stub dist/; runtime uses tsx (same as pnpm start locally).
+CMD ["pnpm", "start"]
