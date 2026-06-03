@@ -228,6 +228,11 @@ Do **not** set `LOCAL_UPLOAD_DIR`.
 
 Optional later: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`.
 
+Optional transcode tuning (worker only):
+
+- `FFMPEG_PRESET=veryfast` (default) — faster encodes; use `fast` for better quality
+- `TRANSCODE_CONCURRENCY=3` (default) — encodes 360p/720p/1080p in parallel; set `1` on free 512MB Render if jobs crash with OOM
+
 ### 3. Deploy and verify
 
 1. **Manual Deploy** (or auto-deploy on push).

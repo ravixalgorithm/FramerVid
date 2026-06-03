@@ -110,6 +110,110 @@ async function runFFmpeg(args: string[]): Promise<void> {
   });
 }
 
+const HLS_LADDERS = [
+  { label: '360p', height: 360, bandwidth: 800_000, display: '640x360' },
+  { label: '720p', height: 720, bandwidth: 1_400_000, display: '1280x720' },
+  { label: '1080p', height: 1080, bandwidth: 2_800_000, display: '1920x1080' },
+] as const;
+
+type HlsLadder = (typeof HLS_LADDERS)[number];
+
+function ffmpegPreset(): string {
+  return process.env.FFMPEG_PRESET?.trim() || 'veryfast';
+}
+
+/** Set TRANSCODE_CONCURRENCY=1 on 512MB instances if jobs OOM. Default 3 = all ladders in parallel. */
+function transcodeConcurrency(): number {
+  const n = Number(process.env.TRANSCODE_CONCURRENCY);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
+}
+
+async function probeSourceHeight(filePath: string): Promise<number | null> {
+  const res = await probeResolution(filePath);
+  if (!res) return null;
+  const parts = res.split('x');
+  const h = Number(parts[1]);
+  return Number.isFinite(h) ? h : null;
+}
+
+function laddersForSource(sourceHeight: number | null): HlsLadder[] {
+  if (sourceHeight == null) return [...HLS_LADDERS];
+  return HLS_LADDERS.filter((l) => l.height <= sourceHeight);
+}
+
+async function encodeHlsLadder(tempDir: string, rawFilePath: string, ladder: HlsLadder): Promise<void> {
+  const playlistPath = path.join(tempDir, `${ladder.label}.m3u8`);
+  await runFFmpeg([
+    '-y',
+    '-i',
+    rawFilePath,
+    '-vf',
+    `scale=-2:${ladder.height}`,
+    '-c:v',
+    'libx264',
+    '-crf',
+    '23',
+    '-preset',
+    ffmpegPreset(),
+    '-hls_time',
+    '6',
+    '-hls_playlist_type',
+    'vod',
+    '-hls_segment_filename',
+    path.join(tempDir, `${ladder.label}_%03d.ts`),
+    '-f',
+    'hls',
+    playlistPath,
+  ]);
+}
+
+function buildMasterPlaylist(ladders: HlsLadder[]): string {
+  const lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
+  for (const ladder of ladders) {
+    lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${ladder.bandwidth},RESOLUTION=${ladder.display}`);
+    lines.push(`${ladder.label}.m3u8`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  if (tasks.length === 0) return [];
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]();
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
+}
+
+async function generateThumbnail(tempDir: string, rawFilePath: string): Promise<string> {
+  const thumbnailPath = path.join(tempDir, 'thumb_0.jpg');
+  await runFFmpeg([
+    '-y',
+    '-ss',
+    '00:00:05',
+    '-i',
+    rawFilePath,
+    '-vframes',
+    '1',
+    '-pix_fmt',
+    'yuvj420p',
+    '-q:v',
+    '2',
+    '-strict',
+    'unofficial',
+    thumbnailPath,
+  ]);
+  return thumbnailPath;
+}
+
 async function simulateTranscode(videoId: string) {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -179,109 +283,27 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
       }
     }
 
-    console.log(`[Worker] Executing FFmpeg transcode for: ${originalFilename}`);
+    const sourceHeight = await probeSourceHeight(rawFilePath);
+    const ladders = laddersForSource(sourceHeight);
+    const concurrency = transcodeConcurrency();
 
-    const path360p = path.join(tempDir, '360p.m3u8');
-    const path720p = path.join(tempDir, '720p.m3u8');
-    const path1080p = path.join(tempDir, '1080p.m3u8');
+    console.log(
+      `[Worker] FFmpeg transcode for ${originalFilename}: ladders=${ladders.map((l) => l.label).join(', ')} preset=${ffmpegPreset()} concurrency=${concurrency}`
+    );
 
-    await runFFmpeg([
-      '-y',
-      '-i',
-      rawFilePath,
-      '-vf',
-      'scale=-2:360',
-      '-c:v',
-      'libx264',
-      '-crf',
-      '23',
-      '-preset',
-      'fast',
-      '-hls_time',
-      '6',
-      '-hls_playlist_type',
-      'vod',
-      '-hls_segment_filename',
-      path.join(tempDir, '360p_%03d.ts'),
-      '-f',
-      'hls',
-      path360p,
-    ]);
+    const transcodeStarted = Date.now();
+    await runWithConcurrency(
+      [
+        ...ladders.map((ladder) => () => encodeHlsLadder(tempDir, rawFilePath, ladder)),
+        () => generateThumbnail(tempDir, rawFilePath),
+      ],
+      concurrency
+    );
+    console.log(
+      `[Worker] Encode + thumbnail finished in ${((Date.now() - transcodeStarted) / 1000).toFixed(1)}s`
+    );
 
-    await runFFmpeg([
-      '-y',
-      '-i',
-      rawFilePath,
-      '-vf',
-      'scale=-2:720',
-      '-c:v',
-      'libx264',
-      '-crf',
-      '23',
-      '-preset',
-      'fast',
-      '-hls_time',
-      '6',
-      '-hls_playlist_type',
-      'vod',
-      '-hls_segment_filename',
-      path.join(tempDir, '720p_%03d.ts'),
-      '-f',
-      'hls',
-      path720p,
-    ]);
-
-    await runFFmpeg([
-      '-y',
-      '-i',
-      rawFilePath,
-      '-vf',
-      'scale=-2:1080',
-      '-c:v',
-      'libx264',
-      '-crf',
-      '23',
-      '-preset',
-      'fast',
-      '-hls_time',
-      '6',
-      '-hls_playlist_type',
-      'vod',
-      '-hls_segment_filename',
-      path.join(tempDir, '1080p_%03d.ts'),
-      '-f',
-      'hls',
-      path1080p,
-    ]);
-
-    const masterPlaylistContent = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
-360p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1400000,RESOLUTION=1280x720
-720p.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1920x1080
-1080p.m3u8`;
-
-    await fs.writeFile(path.join(tempDir, 'master.m3u8'), masterPlaylistContent);
-
-    const thumbnailPath = path.join(tempDir, 'thumb_0.jpg');
-    await runFFmpeg([
-      '-y',
-      '-ss',
-      '00:00:05',
-      '-i',
-      rawFilePath,
-      '-vframes',
-      '1',
-      '-pix_fmt',
-      'yuvj420p',
-      '-q:v',
-      '2',
-      '-strict',
-      'unofficial',
-      thumbnailPath,
-    ]);
+    await fs.writeFile(path.join(tempDir, 'master.m3u8'), buildMasterPlaylist(ladders));
 
     const { masterUrl, thumbUrl } = await uploadTranscodeOutputs(tempDir, workspaceId, videoId);
     const durationSeconds = (await probeDurationSeconds(rawFilePath)) ?? undefined;
