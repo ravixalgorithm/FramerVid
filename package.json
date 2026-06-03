@@ -2,6 +2,14 @@
   "name": "framevid-monorepo",
   "private": true,
   "packageManager": "pnpm@10.8.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "youtube-dl-exec",
+      "msgpackr-extract",
+      "esbuild",
+      "es5-ext"
+    ]
+  },
   "scripts": {
     "build": "turbo run build",
     "railway:start": "pnpm --filter @framevid/db db:push && pnpm --filter @framevid/dashboard start",
