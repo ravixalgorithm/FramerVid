@@ -15,4 +15,5 @@ export const db = drizzle(client, { schema });
 
 // Export everything from schema for easy imports
 export * from './schema.js';
+export { findMonorepoRoot, resolveLocalUploadDir, localUploadPath } from './paths.js';
 export { client };

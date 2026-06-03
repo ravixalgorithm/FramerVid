@@ -8,6 +8,7 @@ import path from 'path';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
+import { localUploadPath as sharedLocalUploadPath, resolveLocalUploadDir } from '@framevid/db';
 
 export const r2 = new S3Client({
   region: 'auto',
@@ -25,15 +26,10 @@ export function isR2Configured(): boolean {
   return Boolean(process.env.CLOUDFLARE_R2_ACCOUNT_ID);
 }
 
-export function resolveLocalUploadDir(): string {
-  if (process.env.LOCAL_UPLOAD_DIR) {
-    return path.resolve(process.env.LOCAL_UPLOAD_DIR);
-  }
-  return path.resolve(process.cwd(), '.data', 'uploads');
-}
+export { resolveLocalUploadDir };
 
 export function localUploadPath(rawKey: string): string {
-  return path.join(resolveLocalUploadDir(), rawKey);
+  return sharedLocalUploadPath(rawKey);
 }
 
 export async function downloadRawFromR2(rawKey: string, destPath: string): Promise<void> {

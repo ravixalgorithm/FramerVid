@@ -3,14 +3,9 @@ const CDN_BASE =
   process.env.CLOUDFLARE_R2_PUBLIC_URL ||
   'https://cdn.framevid.co';
 
-/** Serve mock CDN URLs via /api/media when R2 is not configured (local + Railway disk mode). */
+/** Rewrite CDN URLs to /api/media only when using on-disk storage (no R2). */
 function useLocalMediaProxy(): boolean {
-  if (!process.env.CLOUDFLARE_R2_ACCOUNT_ID) return true;
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname;
-    return host === 'localhost' || host === '127.0.0.1';
-  }
-  return process.env.NODE_ENV === 'development';
+  return !process.env.CLOUDFLARE_R2_ACCOUNT_ID;
 }
 
 function apiBase(): string {

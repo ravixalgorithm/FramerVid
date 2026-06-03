@@ -32,18 +32,25 @@ cp .env.example apps/worker/.env
 # Run migrations (from packages/db)
 pnpm --filter @framevid/db db:migrate
 
-# Terminal 1 — dashboard
-pnpm --filter @framevid/dashboard dev
+# Both dashboard + worker (recommended)
+pnpm dev
 
-# Terminal 2 — transcoding worker
-pnpm --filter @framevid/worker dev
+# Or two terminals:
+pnpm dev:dashboard   # http://localhost:3000
+pnpm dev:worker      # must show: [Worker] Listening on queue "video-transcode"
 ```
 
 Open http://localhost:3000 → sign up → upload a video.
 
+**If thumbnails/HLS 404 locally:** the worker is probably not running, or `REDIS_URL` is missing. Check terminal for `@framevid/worker:dev` logs.
+
 ### Local upload without R2
 
-Leave `CLOUDFLARE_R2_ACCOUNT_ID` empty. Uploads go to `LOCAL_UPLOAD_DIR` (default `./.data/uploads`) and transcode jobs run via Redis.
+Leave `CLOUDFLARE_R2_ACCOUNT_ID` **unset** in both env files. Uploads go to `<repo>/.data/uploads` (shared by dashboard and worker) and transcode jobs run via Redis.
+
+### Local dashboard + production Supabase/R2 data
+
+Uncomment all `CLOUDFLARE_R2_*` vars in `apps/dashboard/.env.local` so thumbnails and HLS load from your real R2 bucket (not `/api/media` disk proxy).
 
 ### Production R2
 
