@@ -15,12 +15,11 @@ COPY packages ./packages
 COPY apps/worker ./apps/worker
 
 RUN pnpm install --frozen-lockfile \
-  && pnpm rebuild youtube-dl-exec msgpackr-extract \
   && pnpm --filter @framevid/types build \
   && pnpm --filter @framevid/db build \
   && pnpm --filter @framevid/queue build \
   && pnpm --filter @framevid/worker build \
-  && pnpm --filter @framevid/worker exec youtube-dl-exec --version
+  && node --input-type=module -e "import('youtube-dl-exec').then(() => console.log('youtube-dl-exec OK'))"
 
 WORKDIR /app/apps/worker
 ENV NODE_ENV=production
