@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { db, videos } from '@framevid/db';
+import { db, videos, workspaces } from '@framevid/db';
+import { eq, count } from 'drizzle-orm';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getCurrentUser } from '../../../lib/auth';
+import { assertWorkspaceAccess } from '../../../lib/workspace-access';
+import { getPlanLimits } from '../../../lib/plan-limits';
 import type { VideoSettings } from '@framevid/types';
 
 // S3 Client configuration for direct-to-R2 uploads
@@ -39,6 +42,43 @@ export async function POST(req: NextRequest) {
     }
 
     const { title, originalFilename, workspaceId, sizeBytes } = parsed.data;
+
+    if (!(await assertWorkspaceAccess(user.id, workspaceId, ['admin', 'editor']))) {
+      return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
+    }
+
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    if (!workspace) {
+      return NextResponse.json({ error: 'Workspace not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    const planLimits = getPlanLimits(workspace.plan || 'free');
+
+    if (planLimits.maxVideos !== null) {
+      const [{ value: videoCount }] = await db
+        .select({ value: count() })
+        .from(videos)
+        .where(eq(videos.workspaceId, workspaceId));
+      if (videoCount >= planLimits.maxVideos) {
+        return NextResponse.json(
+          {
+            error: `Video limit reached (${planLimits.maxVideos} on ${planLimits.label} plan). Upgrade to upload more.`,
+            code: 'PLAN_LIMIT',
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    if (sizeBytes && planLimits.maxBytesPerVideo !== null && sizeBytes > planLimits.maxBytesPerVideo) {
+      return NextResponse.json(
+        {
+          error: `File exceeds ${Math.round(planLimits.maxBytesPerVideo / (1024 * 1024))}MB limit for your plan.`,
+          code: 'PLAN_LIMIT',
+        },
+        { status: 403 },
+      );
+    }
 
     // Create unique Video ID
     const videoId = crypto.randomUUID();

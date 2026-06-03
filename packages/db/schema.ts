@@ -1,5 +1,6 @@
-import { pgTable, text, timestamp, uuid, varchar, bigint, doublePrecision, jsonb, primaryKey } from 'drizzle-orm/pg-core';
-import type { VideoStatus, VideoSettings, WorkspacePlan } from '@framevid/types';
+import { pgTable, text, timestamp, uuid, varchar, bigint, doublePrecision, jsonb, boolean, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
+import type { VideoStatus, VideoSettings, VideoAiInsights, WorkspacePlan } from '@framevid/types';
+import { createHash } from 'crypto';
 
 // Users Table (Custom Auth - password-based signups)
 export const users = pgTable('users', {
@@ -36,6 +37,17 @@ export const workspaceMembers = pgTable('workspace_members', {
   };
 });
 
+// Workspace Invites Table
+export const workspaceInvites = pgTable('workspace_invites', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }).notNull(),
+  email: varchar('email', { length: 255 }).notNull(),
+  role: varchar('role', { length: 50 }).notNull().$type<'admin' | 'editor' | 'viewer'>(),
+  token: varchar('token', { length: 255 }).unique().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Videos Table
 export const videos = pgTable('videos', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -50,6 +62,8 @@ export const videos = pgTable('videos', {
   thumbnailUrls: jsonb('thumbnail_urls').default([]).notNull().$type<string[]>(),
   posterUrl: text('poster_url'),
   captionsUrl: text('captions_url'),
+  aiInsights: jsonb('ai_insights').$type<VideoAiInsights | null>(),
+  audioExtracted: boolean('audio_extracted').default(false).notNull(),
   settings: jsonb('settings').notNull().$type<VideoSettings>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -88,3 +102,27 @@ export const videoEvents = pgTable('video_events', {
   eventData: jsonb('event_data'),
   timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Leads Table (for gated form submissions)
+export const leads = pgTable('leads', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }).notNull(),
+  videoId: uuid('video_id').references(() => videos.id, { onDelete: 'cascade' }).notNull(),
+  email: varchar('email', { length: 255 }),
+  payload: jsonb('payload').notNull().$type<Record<string, string | undefined>>(),
+  source: varchar('source', { length: 64 }).default('player').notNull(),
+  referrerDomain: varchar('referrer_domain', { length: 255 }),
+  userAgent: text('user_agent'),
+  dedupeKey: varchar('dedupe_key', { length: 64 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => {
+  return {
+    dedupeKeyUnique: uniqueIndex('leads_dedupe_key_unique').on(table.dedupeKey),
+  };
+});
+
+export function computeLeadDedupeKey(args: { workspaceId: string; videoId: string; email?: string | null }) {
+  const normEmail = (args.email || '').trim().toLowerCase();
+  const raw = `${args.workspaceId}:${args.videoId}:${normEmail}`;
+  return createHash('sha256').update(raw).digest('hex').slice(0, 64);
+}

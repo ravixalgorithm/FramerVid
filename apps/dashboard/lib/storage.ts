@@ -1,8 +1,17 @@
 import path from 'path';
 
-/** Local disk storage for dev uploads when R2 is not configured. */
+/** Upload root: Railway volume `/.data/uploads` or monorepo `.data/uploads` in dev. */
+export function resolveLocalUploadDir(): string {
+  if (process.env.LOCAL_UPLOAD_DIR) {
+    return path.resolve(process.env.LOCAL_UPLOAD_DIR);
+  }
+  return path.resolve(process.cwd(), '.data', 'uploads');
+}
+
 export function localUploadPath(rawKey: string): string {
-  const base =
-    process.env.LOCAL_UPLOAD_DIR || path.join(process.cwd(), '.data', 'uploads');
-  return path.join(base, rawKey);
+  return path.join(resolveLocalUploadDir(), rawKey);
+}
+
+export function isDiskStorageMode(): boolean {
+  return !process.env.CLOUDFLARE_R2_ACCOUNT_ID;
 }

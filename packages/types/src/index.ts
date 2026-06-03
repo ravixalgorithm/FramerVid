@@ -21,8 +21,10 @@ export interface VideoSettings {
   muted: boolean;
   controlsStyle: ControlStyle;
   primaryColor: string; // e.g. '#FF0055'
+  brandingEnabled?: boolean;
   brandingLogoUrl?: string;
   brandingPosition?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  brandingSize?: number; // width in pixels
   endScreenType?: 'image' | 'cta' | 'none';
   endScreenImageUrl?: string;
   privacy: 'public' | 'unlisted' | 'password';
@@ -71,6 +73,12 @@ export interface VideoSettings {
   formTextColor?: string;
   formBgColor?: string;
   formAlignment?: 'left' | 'center' | 'right';
+  formOverlayOpacity?: number; // 0..1
+  formCardOpacity?: number; // 0..1
+  formFieldBgColor?: string;
+  formFieldBorderColor?: string;
+  formUseThemeColors?: boolean;
+  formFontFamily?: string;
   formFields?: {
     id: string;
     name: string;
@@ -78,6 +86,20 @@ export interface VideoSettings {
     required: boolean;
   }[];
   formSkipEnabled?: boolean;
+  formRequireConsent?: boolean;
+  formConsentText?: string;
+
+  // Player flags (set in dashboard)
+  clickToPlay?: boolean;
+  startInView?: boolean;
+  playInline?: boolean;
+  bgVideo?: boolean;
+  playFromStartFullscreen?: boolean;
+  keyboardShortcuts?: boolean;
+  showExitThumbnail?: boolean;
+  showSelectQuality?: boolean;
+  showPlaybackSpeed?: boolean;
+  showCaptionsControl?: boolean;
 }
 
 export interface Video {
@@ -94,8 +116,13 @@ export interface Video {
   posterUrl?: string;
   captionsUrl?: string;
   settings: VideoSettings;
+  aiInsights?: VideoAiInsights | null;
+  audioExtracted?: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /** Normalized 0–100 popularity per 5s bucket (public meta only) */
+  popularityCurve?: number[];
+  popularityBucketSeconds?: number;
 }
 
 // Workspace types
@@ -161,10 +188,54 @@ export type VideoEventType =
   | 'video_progress'
   | 'video_complete'
   | 'video_seek'
+  | 'heartbeat'
   | 'lightbox_open'
   | 'form_view'
   | 'form_submit'
+  | 'form_submit_attempt'
+  | 'form_submit_success'
+  | 'form_submit_error'
+  | 'form_skip'
   | 'cta_click';
+
+export interface VideoAiInsights {
+  summary?: string;
+  suggestedTitle?: string;
+  tags?: string[];
+  generatedAt?: string;
+  friction?: FrictionInsight;
+}
+
+export interface FrictionInsight {
+  cliffBucket: number;
+  dropPct: number;
+  analysis?: string;
+  actions?: string[];
+  transcriptSnippet?: string;
+  generatedAt?: string;
+}
+
+export interface RetentionSeries {
+  bucketSeconds: number;
+  buckets: number[];
+  retentionPct: number[];
+}
+
+export interface AudienceBreakdown {
+  devices: { label: string; count: number; pct: number }[];
+  referrers: { label: string; count: number; pct: number }[];
+}
+
+export interface VideoAnalyticsData {
+  views: number;
+  formSubmissions: number;
+  ctaClicks: number;
+  engagement: number;
+  recentLeads: { email: string; timestamp: string | Date; country: string }[];
+  retention?: RetentionSeries;
+  friction?: FrictionInsight | null;
+  audience?: AudienceBreakdown;
+}
 
 export interface VideoEventPayload {
   videoId: string;

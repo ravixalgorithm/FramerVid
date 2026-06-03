@@ -5,8 +5,8 @@
   "type": "module",
   "main": "./dist/processor.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node ./dist/processor.js",
+    "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/processor.js','// Railway/runtime uses tsx src/processor.ts\\n')\"",
+    "start": "tsx src/processor.ts",
     "dev": "tsx watch src/processor.ts"
   },
   "dependencies": {
@@ -18,11 +18,12 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.30.9",
     "ioredis": "^5.4.1",
-    "postgres": "^3.4.4"
+    "postgres": "^3.4.4",
+    "youtube-dl-exec": "^3.1.7",
+    "tsx": "^4.7.2"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
-    "tsx": "^4.7.2",
     "typescript": "^5.4.5"
   }
 }

@@ -25,9 +25,15 @@ export function isR2Configured(): boolean {
   return Boolean(process.env.CLOUDFLARE_R2_ACCOUNT_ID);
 }
 
+export function resolveLocalUploadDir(): string {
+  if (process.env.LOCAL_UPLOAD_DIR) {
+    return path.resolve(process.env.LOCAL_UPLOAD_DIR);
+  }
+  return path.resolve(process.cwd(), '.data', 'uploads');
+}
+
 export function localUploadPath(rawKey: string): string {
-  const base = process.env.LOCAL_UPLOAD_DIR || path.join(process.cwd(), '.data', 'uploads');
-  return path.join(base, rawKey);
+  return path.join(resolveLocalUploadDir(), rawKey);
 }
 
 export async function downloadRawFromR2(rawKey: string, destPath: string): Promise<void> {
@@ -60,6 +66,9 @@ function contentTypeForFile(filePath: string): string {
   if (ext === '.ts') return 'video/mp2t';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
   if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.mp3') return 'audio/mpeg';
+  if (ext === '.vtt') return 'text/vtt';
+  if (ext === '.json') return 'application/json';
   return 'application/octet-stream';
 }
 
@@ -68,7 +77,10 @@ export async function uploadFileToR2(
   key: string
 ): Promise<string> {
   if (!isR2Configured()) {
-    console.log(`[R2 Simulator] Mock uploaded ${filePath} → ${key}`);
+    const localPath = localUploadPath(key);
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await fs.copyFile(filePath, localPath);
+    console.log(`[R2 Simulator] Mock uploaded ${filePath} → ${localPath}`);
     return `${PUBLIC_CDN_URL}/${key}`;
   }
 

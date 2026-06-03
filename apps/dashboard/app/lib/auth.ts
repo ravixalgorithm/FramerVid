@@ -22,9 +22,9 @@ export function verifyPassword(password: string, storedHash: string): boolean {
 }
 
 // 2. Token Generator & Validator (Zero-dependency JWT replacement using HMAC-SHA256)
-export function signSession(payload: any): string {
+export function signSession(payload: any, expiresInMs: number = 1000 * 60 * 60 * 24 * 7): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 1000 * 60 * 60 * 24 * 7 })).toString('base64url'); // 7 days expiry
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + expiresInMs })).toString('base64url');
   
   const hmac = crypto.createHmac('sha256', JWT_SECRET);
   hmac.update(`${header}.${body}`);

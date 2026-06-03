@@ -3,7 +3,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { db, videos } from '@framevid/db';
 import { eq } from 'drizzle-orm';
-import { getQueueConnection, TRANSCODE_QUEUE_NAME, type TranscodeJobData } from '@framevid/queue';
+import { getQueueConnection, TRANSCODE_QUEUE_NAME, IMPORT_QUEUE_NAME, type TranscodeJobData, type ImportJobData, enqueueTranscodeJob } from '@framevid/queue';
+import youtubedl from 'youtube-dl-exec';
 import dotenv from 'dotenv';
 import {
   downloadRawFromR2,
@@ -11,6 +12,7 @@ import {
   localUploadPath,
   isR2Configured,
 } from './r2.js';
+import { extractAndUploadAudio } from './deepgram.js';
 
 dotenv.config();
 
@@ -24,6 +26,64 @@ async function checkFFmpegExists(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function probeDurationSeconds(filePath: string): Promise<number | null> {
+  try {
+    const { spawn } = await import('child_process');
+    return await new Promise((resolve) => {
+      const child = spawn('ffprobe', [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        filePath,
+      ]);
+      let stdout = '';
+      child.stdout?.on('data', (d) => {
+        stdout += d.toString();
+      });
+      child.on('close', () => {
+        const n = parseFloat(stdout.trim());
+        resolve(Number.isFinite(n) ? n : null);
+      });
+      child.on('error', () => resolve(null));
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function probeResolution(filePath: string): Promise<string | null> {
+  try {
+    const { spawn } = await import('child_process');
+    return await new Promise((resolve) => {
+      const child = spawn('ffprobe', [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'csv=s=x:p=0',
+        filePath,
+      ]);
+      let stdout = '';
+      child.stdout?.on('data', (d) => {
+        stdout += d.toString();
+      });
+      child.on('close', () => {
+        const res = stdout.trim();
+        resolve(res.includes('x') ? res : null);
+      });
+      child.on('error', () => resolve(null));
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -211,12 +271,36 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
       rawFilePath,
       '-vframes',
       '1',
+      '-pix_fmt',
+      'yuvj420p',
       '-q:v',
       '2',
+      '-strict',
+      'unofficial',
       thumbnailPath,
     ]);
 
     const { masterUrl, thumbUrl } = await uploadTranscodeOutputs(tempDir, workspaceId, videoId);
+    const durationSeconds = (await probeDurationSeconds(rawFilePath)) ?? undefined;
+    const resolution = await probeResolution(rawFilePath);
+
+    let settingsUpdate: any = undefined;
+    if (resolution) {
+      const [currentVideo] = await db.select().from(videos).where(eq(videos.id, videoId)).limit(1);
+      if (currentVideo && currentVideo.settings) {
+        settingsUpdate = {
+          ...(currentVideo.settings as any),
+          resolution,
+        };
+      }
+    }
+
+    let audioUrl: string | null = null;
+    try {
+      audioUrl = await extractAndUploadAudio(rawFilePath, tempDir, workspaceId, videoId);
+    } catch (audioErr) {
+      console.warn(`[Worker] Audio extract failed for ${videoId}:`, audioErr);
+    }
 
     await db
       .update(videos)
@@ -225,9 +309,15 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
         hlsManifestUrl: masterUrl,
         thumbnailUrls: thumbUrl ? [thumbUrl] : [],
         posterUrl: thumbUrl || null,
+        durationSeconds: durationSeconds ?? null,
+        ...(settingsUpdate && { settings: settingsUpdate }),
+        audioExtracted: Boolean(audioUrl),
         updatedAt: new Date(),
       })
       .where(eq(videos.id, videoId));
+
+    // Audio has been extracted and uploaded to R2, setting `audioExtracted: true` in the DB.
+    // We no longer trigger AI transcription here; it is now strictly on-demand via the dashboard.
 
     console.log(`[Worker] Production transcode complete for Video ID: ${videoId}`);
   } catch (error: unknown) {
@@ -265,4 +355,109 @@ worker.on('failed', (job, err) => {
 });
 
 console.log('[Worker] Transcoding queue listener started.');
-export { worker };
+
+async function processImportJob(job: { data: ImportJobData }) {
+  const { videoId, workspaceId, url } = job.data;
+  console.log(`[Worker] Started import job for Video ID: ${videoId} from ${url}`);
+
+  const tempDir = path.join(process.platform === 'win32' ? process.env.TEMP || 'C:\\Temp' : '/tmp', 'framevid', `import_${videoId}`);
+  const importedFilename = 'imported.mp4';
+  const rawFilePath = path.join(tempDir, importedFilename);
+  const rawKey = `${workspaceId}/${videoId}/raw/${importedFilename}`;
+
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+
+    await db
+      .update(videos)
+      .set({ status: 'processing', updatedAt: new Date() })
+      .where(eq(videos.id, videoId));
+
+    console.log(`[Worker] Downloading ${url} via youtube-dl-exec...`);
+    await youtubedl(url, {
+      output: rawFilePath,
+      format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',
+      mergeOutputFormat: 'mp4',
+      noCheckCertificates: true,
+      noWarnings: true,
+      extractorArgs: 'youtube:player_client=android,web',
+    });
+
+    // Check if the file was downloaded successfully and get its size
+    await fs.access(rawFilePath);
+    const stats = await fs.stat(rawFilePath);
+    
+    // Save the file size to the database
+    await db.update(videos).set({ sizeBytes: stats.size }).where(eq(videos.id, videoId));
+
+    // Upload to R2 or Mock local
+    if (!isR2Configured()) {
+      const localPath = localUploadPath(rawKey);
+      await fs.mkdir(path.dirname(localPath), { recursive: true });
+      await fs.copyFile(rawFilePath, localPath);
+      console.log(`[Worker] Saved imported file to local upload path: ${localPath}`);
+    } else {
+      const { uploadFileToR2 } = await import('./r2.js');
+      await uploadFileToR2(rawFilePath, rawKey);
+      console.log(`[Worker] Uploaded imported file to R2: ${rawKey}`);
+    }
+
+    // Try to extract title
+    try {
+      const info: any = await youtubedl(url, { 
+        dumpJson: true, 
+        noWarnings: true,
+        extractorArgs: 'youtube:player_client=android,web',
+      });
+      if (info?.title) {
+        await db.update(videos).set({ title: info.title, originalFilename: `${info.title}.mp4` }).where(eq(videos.id, videoId));
+      }
+    } catch (err) {
+      console.warn(`[Worker] Failed to extract metadata for ${url}:`, err);
+    }
+
+    console.log(`[Worker] Enqueuing transcode job for imported video: ${videoId}`);
+    await enqueueTranscodeJob({
+      videoId,
+      workspaceId,
+      rawKey,
+      originalFilename: importedFilename,
+    });
+
+  } catch (error: any) {
+    console.error(`[Worker] Import failed for Video ID: ${videoId}:`, error);
+    await db
+      .update(videos)
+      .set({ status: 'error', updatedAt: new Date() })
+      .where(eq(videos.id, videoId));
+    throw error;
+  } finally {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch (cleanupErr) {
+      console.error(`[Worker] Cleanup failed for ${tempDir}:`, cleanupErr);
+    }
+  }
+}
+
+
+
+const importWorker = new Worker<ImportJobData>(
+  IMPORT_QUEUE_NAME,
+  async (job) => {
+    await processImportJob(job);
+  },
+  { connection: getQueueConnection() as any }
+);
+
+importWorker.on('completed', (job) => {
+  console.log(`[Worker] Completed import job ${job.id}`);
+});
+
+importWorker.on('failed', (job, err) => {
+  console.error(`[Worker] Import Job ${job?.id} failed: ${err.message}`);
+});
+
+console.log('[Worker] Import queue listener started.');
+
+export { worker, importWorker };

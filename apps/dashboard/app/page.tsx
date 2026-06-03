@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { db, workspaces, videos, workspaceMembers } from '@framevid/db';
+import { cookies } from 'next/headers';
+import { db, workspaces, videos, workspaceMembers, videoFolders } from '@framevid/db';
 import { eq } from 'drizzle-orm';
 import { getCurrentUser } from './lib/auth';
 import VideoDashboardClient from './VideoDashboardClient';
@@ -18,10 +19,21 @@ export default async function DashboardPage() {
   let activeWorkspace: any = null;
 
   if (memberships.length > 0) {
+    const cookieStore = cookies();
+    const cookieWorkspaceId = cookieStore.get('framevid_workspace_id')?.value;
+    
+    let activeMembership = memberships[0];
+    if (cookieWorkspaceId) {
+      const found = memberships.find((m) => m.workspaceId === cookieWorkspaceId);
+      if (found) {
+        activeMembership = found;
+      }
+    }
+
     const matchedWorkspaces = await db
       .select()
       .from(workspaces)
-      .where(eq(workspaces.id, memberships[0].workspaceId));
+      .where(eq(workspaces.id, activeMembership.workspaceId));
     activeWorkspace = matchedWorkspaces[0];
   } else {
     const workspaceSlug = `default-workspace-${Math.random().toString(36).substring(2, 6)}`;
@@ -49,10 +61,19 @@ export default async function DashboardPage() {
     throw new Error('Could not establish an active workspace for user');
   }
 
-  const videoList = await db
-    .select()
+  const videoRows = await db
+    .select({
+      video: videos,
+      folderId: videoFolders.folderId,
+    })
     .from(videos)
+    .leftJoin(videoFolders, eq(videos.id, videoFolders.videoId))
     .where(eq(videos.workspaceId, activeWorkspace.id));
+
+  const videoList = videoRows.map((row) => ({
+    ...row.video,
+    folderId: row.folderId || null,
+  }));
 
   return (
     <VideoDashboardClient

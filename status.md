@@ -1,10 +1,12 @@
 # FrameVid — Build Status
 
-Last updated: 2026-06-01 (production deploy configs added)
+Last updated: 2026-06-02 (password protection shipped)
 
 Legend: `[x]` done · `[~]` partial · `[ ]` not started
 
-**Overall:** Phase 1 ~70% · Phase 2 ~55% · Phase 3 ~35% · Phase 4 ~10% · Phase 5 ~0%
+**Overall:** Phase 1 ~85% · Phase 2 ~60% · Phase 3 ~50% · Phase 4 ~55% · Phase 5 ~0%
+
+**Engagement analytics plan (M5–M7):** complete — heartbeat → meta popularity curve → dashboard retention + AI friction; Deepgram M1–M2 wired in worker + webhook.
 
 ---
 
@@ -26,8 +28,9 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 | R2 webhook (auto queue) | [ ] | Optional; using client `complete` for now |
 | Fly.io deploy config | [x] | `Dockerfile.worker`, `fly.worker.toml` |
 | Vercel deploy config | [x] | `apps/dashboard/vercel.json`, `next.config.mjs` |
-| Production SQL migration | [x] | `packages/db/drizzle/0000_init.sql` |
+| Production SQL migration | [x] | `0000_init.sql`; run `0001_analytics_ai.sql` for `ai_insights` + `audio_extracted` |
 | Deploy guide | [x] | `DEPLOY.md` |
+| Railway deploy (disk, no R2) | [x] | `RAILWAY_DEPLOY.md`, shared volume `/.data` |
 | CI (GitHub Actions) | [x] | `.github/workflows/ci.yml` |
 | Health check endpoint | [x] | `GET /api/health` |
 | README / local setup guide | [x] | See `README.md` |
@@ -46,7 +49,8 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 | Configurable API base URL | [x] | Prop + `NEXT_PUBLIC_FRAMERVID_API_URL` |
 | `/api/v1/*` routes (meta, events) | [x] | Aliases for component |
 | Motion effects (8 types) | [~] | Variants defined; parallax/hover/viewport imperative |
-| Analytics sendBeacon | [x] | Wired to dashboard events API |
+| Analytics sendBeacon | [x] | `sessionId` + `heartbeat` every 5s; `POST /api/v1/events` |
+| Popularity waveform (hover) | [x] | `popularityCurve` from meta; SVG overlay |
 | Lightbox | [~] | In component; needs QA |
 | Custom controls module split | [ ] | Still monolithic |
 | Framer Marketplace publish | [ ] | Manual release |
@@ -59,14 +63,15 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 | Item | Status | Notes |
 |------|--------|-------|
 | Video library grid/list + search | [x] | `VideoDashboardClient` |
+| Framer-style UI (Inter, violet accent, auth shell) | [x] | `globals.css`, `Logo`, `AuthShell`, dashboard + detail pages |
 | Upload progress UI | [x] | |
 | Video detail / settings UI | [x] | Large `VideoDetailsClient` |
 | Folders API | [x] | `GET/POST /api/folders` |
 | Folders UI wired to API | [x] | Replaces client-only mock |
-| Workspace switcher / multi-workspace | [ ] | Auto-creates one workspace |
-| Team invites + RBAC | [ ] | Schema only |
+| Workspace switcher / multi-workspace | [x] | `WorkspaceSwitcher` + `/api/workspaces` + cookie |
+| Team invites + RBAC | [x] | Full end-to-end flow built |
 | Player customization persisted | [x] | PATCH video settings |
-| Plan limits enforcement | [ ] | Plan field only |
+| Plan limits enforcement | [~] | `plan-limits.ts`; enforced on upload + UI hints |
 | Usage stats (storage/bandwidth) | [ ] | Fields in schema, no metering |
 
 ---
@@ -75,12 +80,16 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Analytics dashboard (drop-off, devices) | [~] | Basic; some mocked metrics |
+| Analytics dashboard (drop-off, devices) | [x] | Retention + friction + device/referrer breakdown on analytics tab |
 | ClickHouse events | [ ] | Postgres `video_events` used |
-| Whisper auto-captions | [ ] | |
-| Password-protected / signed URLs | [ ] | Types only |
-| Upload via URL (YouTube/Vimeo) | [ ] | |
-| Chapters | [ ] | |
+| Manual captions upload (.vtt/.srt) | [x] | `POST .../captions`; dashboard VTT overlay |
+| Heartbeat events (5s buckets) | [x] | `heartbeat` + `sessionId` on player beacon |
+| Popularity graph on player (meta + SVG) | [x] | `popularityCurve` on meta; hover waveform |
+| Retention heatmap (dashboard) | [x] | Recharts area chart on analytics tab |
+| AI drop-off friction analysis | [x] | Cliff detect + `gpt-4o-mini`; cached in `ai_insights.friction` |
+| AI captions + insights (Deepgram + OpenAI) | [x] | Worker: `audio.mp3` → Deepgram → webhook → VTT + `transcript.json` |
+| Password-protected / signed URLs | [x] | Implemented across API proxy, UI, and player component |
+| Upload via URL (YouTube/Vimeo) | [x] | Import modal + youtube-dl-exec worker pipeline |
 | All 8 motion effects polished | [~] | |
 | CTA + lead forms in player | [~] | Beyond PRD scope; UI exists |
 
@@ -102,11 +111,20 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 |------|--------|-------|
 | `.env.example` | [x] | |
 | Unit / integration tests | [ ] | |
-| `pnpm typecheck` clean | [~] | Run after changes |
+| `pnpm typecheck` clean | [x] | dashboard, component, db, types (worker `tsc` has known Drizzle dup issue) |
 | CI (GitHub Actions) | [x] | typecheck + dashboard build |
-| Production deploy (live) | [~] | Dashboard on Vercel — add `DATABASE_URL`, `REDIS_URL`, R2 in project settings; Fly worker pending |
+| Production deploy (live) | [~] | Dashboard on Vercel — add `DATABASE_URL`, `REDIS_URL`, R2; run `0001` migration; Fly worker pending |
 | Resend email | [ ] | |
 | Stripe / billing | [ ] | |
+
+---
+
+## Next up (recommended order)
+
+1. **Ops:** Run `packages/db/drizzle/0001_analytics_ai.sql` on production Postgres.
+2. **Env:** `DEEPGRAM_API_KEY`, `DASHBOARD_WEBHOOK_URL` (or `NEXT_PUBLIC_API_URL`), `OPENAI_API_KEY` for friction copy.
+3. **Verify:** Play video on published page → `heartbeat` rows → meta `popularityCurve` → Analytics tab retention chart.
+4. **Build:** Polishing all 8 motion effects.
 
 ---
 

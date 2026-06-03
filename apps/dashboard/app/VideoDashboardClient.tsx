@@ -3,6 +3,15 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Video } from '@framevid/types';
+import Link from 'next/link';
+import { Logo } from '../components/brand/Logo';
+import { ProfileMenu } from '../components/dashboard/ProfileMenu';
+import { WorkspaceSwitcher } from '../components/dashboard/WorkspaceSwitcher';
+import { VideoGridCard } from '../components/dashboard/VideoGridCard';
+import { NotificationPanel } from '../components/notifications/NotificationPanel';
+import { useNotifications } from '../components/notifications/NotificationProvider';
+import { getPlanLimits, formatMaxFileSize, formatMaxDuration } from './lib/plan-limits';
+import { resolveMediaUrl } from './lib/asset-url';
 
 interface ClientProps {
   initialVideos: any[];
@@ -35,10 +44,11 @@ function formatDuration(seconds?: number) {
 }
 
 function formatSize(bytes?: number) {
-  if (!bytes) return '0 MB';
+  if (!bytes) return '--';
   const mb = bytes / (1024 * 1024);
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${Math.round(mb)} MB`;
+  if (mb < 1) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${mb.toFixed(1)} MB`;
 }
 
 function getRelativeTimeString(dateInput: Date | string) {
@@ -51,7 +61,7 @@ function getRelativeTimeString(dateInput: Date | string) {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffSecs < 60) return 'Just now';
-  if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'hour ago' : 'm ago'}`; // simplified or custom
+  if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'min ago' : 'mins ago'}`;
   if (diffHours < 24) return `${diffHours} ${diffHours === 1 ? 'hour' : 'hours'} ago`;
   if (diffDays < 30) return `${diffDays} ${diffDays === 1 ? 'day' : 'days'} ago`;
   
@@ -60,13 +70,27 @@ function getRelativeTimeString(dateInput: Date | string) {
 }
 
 function getResolutionString(video: any) {
-  // Check if filename or title represents a phone vertical screen recording (vertical 9:16 layout)
-  const isVertical = video.title.toLowerCase().startsWith('img_') || video.originalFilename.toLowerCase().startsWith('img_');
+  // If we have actual resolution stored in the database, use it
+  if (video?.settings?.resolution) {
+    return video.settings.resolution;
+  }
+  // Fallback for older videos: Check if filename or title represents a phone vertical screen recording
+  const isVertical = video?.title?.toLowerCase()?.startsWith('img_') || video?.originalFilename?.toLowerCase()?.startsWith('img_');
   return isVertical ? '2160×3840' : '1920×1080';
 }
 
 function thumbnailFor(video: any) {
-  return video.posterUrl || video.thumbnailUrls?.[0];
+  return resolveMediaUrl(video.posterUrl || video.thumbnailUrls?.[0]);
+}
+
+function StatusBadge({ status, label }: { status: string; label: string }) {
+  if (status === 'ready') {
+    return <span className="status-pill status-pill-success">Success</span>;
+  }
+  if (status === 'error') {
+    return <span className="status-pill status-pill-danger">Failed</span>;
+  }
+  return <span className="status-pill status-pill-warning">{label}</span>;
 }
 
 export default function VideoDashboardClient({ initialVideos, workspaceId, user, activeWorkspace }: ClientProps) {
@@ -75,11 +99,16 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   
-  // Workspace dropdown state
-  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
-  
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const { success: toastSuccess, error: toastError } = useNotifications();
+
   // Options menu active video state
   const [activeMenuVideoId, setActiveMenuVideoId] = useState<string | null>(null);
+
+  // Import state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
 
   // Uploading state
   const [uploading, setUploading] = useState(false);
@@ -95,6 +124,9 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
   const [showBulkMoveModal, setShowBulkMoveModal] = useState(false);
   const [bulkMoveFolder, setBulkMoveFolder] = useState('');
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [movingVideos, setMovingVideos] = useState(false);
+  const [singleMoveVideoId, setSingleMoveVideoId] = useState<string | null>(null);
 
   const [showRecordModal, setShowRecordModal] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -107,6 +139,15 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
   // Account initial
   const userInitial = (user.name || user.email)[0].toUpperCase();
+  const planLimits = getPlanLimits(activeWorkspace.plan);
+  const atVideoLimit = planLimits.maxVideos !== null && videos.length >= planLimits.maxVideos;
+
+  useEffect(() => {
+    setVideos(initialVideos);
+    setActiveFolderId(null);
+  }, [initialVideos]);
+
+  const showToast = (message: string) => toastSuccess(message);
 
   // Load folders from API
   useEffect(() => {
@@ -211,8 +252,47 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
     };
   }, [isRecording]);
 
+  const handleImportUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importUrl.trim()) return;
+    if (atVideoLimit) {
+      toastError(`Video limit reached (${planLimits.maxVideos} on ${planLimits.label} plan).`);
+      return;
+    }
+    
+    setImporting(true);
+    try {
+      const res = await fetch('/api/videos/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl, workspaceId }),
+      });
+      
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to initiate import');
+      
+      setVideos((prev) => [payload.data.video, ...prev]);
+      setShowImportModal(false);
+      setImportUrl('');
+      showToast('Import job queued. The video is downloading.');
+    } catch (err: any) {
+      toastError('Import failed', { message: err.message });
+      console.error(err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleFile = async (file: File) => {
     if (!file) return;
+    if (atVideoLimit) {
+      toastError(`Video limit reached (${planLimits.maxVideos} on ${planLimits.label} plan).`);
+      return;
+    }
+    if (planLimits.maxBytesPerVideo !== null && file.size > planLimits.maxBytesPerVideo) {
+      toastError(`File exceeds ${formatMaxFileSize(planLimits.maxBytesPerVideo)} limit for your plan.`);
+      return;
+    }
     setUploading(true);
     setUploadProgress(0);
     setUploadSpeed('');
@@ -278,7 +358,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         setVideos((prev) => prev.map((item) => (item.id === video.id ? refetchPayload.data : item)));
       }
     } catch (err: any) {
-      alert(`Upload Error: ${err.message}`);
+      toastError('Upload failed', { message: err.message });
       console.error(err);
     } finally {
       setUploading(false);
@@ -296,45 +376,100 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         setVideos((prev) => prev.filter((video) => video.id !== videoId));
       } else {
         const payload = await res.json();
-        alert(`Failed to delete video: ${payload.error || 'Unknown error'}`);
+        toastError('Failed to delete', { message: payload.error || 'Unknown error' });
       }
     } catch (err: any) {
-      alert(`Delete Error: ${err.message}`);
+      toastError('Delete failed', { message: err.message });
     }
   };
 
   const copyComponentId = async (video: Video) => {
     await navigator.clipboard?.writeText(video.id);
-    alert('Copied FrameVid Component ID to clipboard!');
+    showToast('Copied component ID to clipboard');
+  };
+
+  const downloadVideo = (video: Video) => {
+    try {
+      const downloadUrl = `/api/videos/${video.id}/download`;
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = video.originalFilename || 'video.mp4';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Failed to trigger download:', err);
+      toastError('Download failed', { message: 'Could not download the video' });
+    }
+  };
+
+  const moveVideosToFolder = async (videoIds: string[], folderId: string) => {
+    if (videoIds.length === 0 || !folderId) return;
+    setMovingVideos(true);
+    try {
+      const res = await fetch('/api/folders/videos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoIds, folderId }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to move videos');
+      setVideos((prev) =>
+        prev.map((v) => (videoIds.includes(v.id) ? { ...v, folderId } : v)),
+      );
+      showToast(
+        videoIds.length === 1 ? 'Video moved to folder' : `Moved ${videoIds.length} videos`,
+      );
+      setShowBulkMoveModal(false);
+      setSingleMoveVideoId(null);
+      setBulkSelectedIds([]);
+      setBulkMoveFolder('');
+    } catch (err: unknown) {
+      toastError(err instanceof Error ? err.message : 'Failed to move videos');
+    } finally {
+      setMovingVideos(false);
+    }
   };
 
   const openVideo = (video: Video) => {
     if (video.status !== 'uploading') router.push(`/videos/${video.id}`);
   };
 
-  // Filtered Videos based on search query
-  const filteredVideos = videos.filter((video) =>
-    video.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    video.originalFilename.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredVideos = videos.filter((video) => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      video?.title?.toLowerCase()?.includes(q) || video?.originalFilename?.toLowerCase()?.includes(q);
+    const matchesFolder =
+      activeFolderId === null || video.folderId === activeFolderId;
+    return matchesSearch && matchesFolder;
+  });
 
   const handleCreateFolderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) return;
+    const name = newFolderName.trim();
+    if (!name) return;
     try {
       const res = await fetch('/api/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, name: newFolderName.trim() }),
+        body: JSON.stringify({ workspaceId, name }),
       });
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error || 'Failed to create folder');
       setFolders((prev) => [...prev, payload.data]);
       setNewFolderName('');
       setShowFolderModal(false);
+      showToast(`Folder "${name}" created`);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to create folder');
+      toastError(err instanceof Error ? err.message : 'Failed to create folder');
     }
+  };
+
+  const openBulkMoveModal = () => {
+    setBulkSelectedIds([]);
+    setBulkMoveFolder('');
+    setShowBulkMoveModal(true);
   };
 
   // Mock Camera Action
@@ -365,7 +500,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         loop: false,
         muted: false,
         controlsStyle: 'show',
-        primaryColor: '#F97316',
+        primaryColor: '#5B4FE8',
         privacy: 'public',
         downloadEnabled: false,
         playbackSpeeds: [0.5, 1, 1.25, 1.5, 2],
@@ -375,71 +510,31 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F9FAFB] font-sans text-gray-900 selection:bg-orange-500 selection:text-white">
-      {/* GLOBAL DRAG OVERLAY */}
+    <div className="dash-shell selection:bg-[hsl(var(--accent))] selection:text-white">
       {isWindowDragging && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm p-8 transition-all duration-300">
-          <div className="flex h-full w-full flex-col items-center justify-center rounded-2xl border-4 border-dashed border-orange-500 bg-orange-50/50 p-6 text-center animate-in-up">
-            <svg className="h-16 w-16 text-orange-500 animate-bounce mb-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <div className="drop-overlay">
+          <div className="drop-overlay-inner">
+            <svg className="mb-4 h-14 w-14 text-[hsl(var(--accent))]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Drop files anywhere</h2>
-            <p className="mt-2 text-lg font-medium text-gray-600">Upload video to FrameVid instantly</p>
+            <h2 className="page-title text-2xl">Drop files anywhere</h2>
+            <p className="page-subtitle mt-2 text-base">Release to upload to FrameVid</p>
           </div>
         </div>
       )}
 
-      {/* TOP HEADER */}
-      <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-4 sm:px-6">
+      <header className="dash-topbar">
         <div className="flex items-center gap-4">
-          {/* Logo */}
-          <div onClick={() => router.push('/')} className="flex items-center gap-2 cursor-pointer transition-opacity hover:opacity-85">
-            <span className="font-extrabold text-[15px] tracking-tight">FrameVid</span>
-          </div>
+          <button type="button" onClick={() => router.push('/')} className="cursor-pointer transition-opacity hover:opacity-85">
+            <Logo />
+          </button>
 
-          {/* Workspace Pill Selector */}
-          <div className="relative">
-            <button
-              onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}
-              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 focus:outline-none"
-            >
-              <span className="truncate max-w-[140px] sm:max-w-[200px]">{activeWorkspace.name}</span>
-              <span className="rounded bg-gray-100 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                {activeWorkspace.plan}
-              </span>
-              <svg className="h-3 w-3 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 3a.75.75 0 0 1 .55.24l3.25 3.5a.75.75 0 1 1-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 0 1-1.1-1.02l3.25-3.5A.75.75 0 0 1 10 3Zm0 14a.75.75 0 0 1-.55-.24l-3.25-3.5a.75.75 0 1 1 1.1-1.02l2.7 2.908 2.7-2.908a.75.75 0 1 1 1.1 1.02l-3.25 3.5A.75.75 0 0 1 10 17Z" clipRule="evenodd" />
-              </svg>
-            </button>
-
-            {workspaceDropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setWorkspaceDropdownOpen(false)} />
-                <div className="absolute left-0 mt-1.5 w-64 origin-top-left rounded-lg border border-gray-200 bg-white p-1 shadow-lg ring-1 ring-black/5 z-50">
-                  <div className="px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">Workspaces</div>
-                  <button className="flex w-full items-center justify-between rounded-md bg-orange-50/65 px-2 py-1.5 text-left text-xs font-semibold text-orange-600">
-                    <span className="truncate">{activeWorkspace.name}</span>
-                    <svg className="h-3.5 w-3.5 text-orange-600" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  <button className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900">
-                    Personal Workspace
-                  </button>
-                  <div className="my-1 border-t border-gray-100" />
-                  <button className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-900">
-                    + Create Workspace
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          <WorkspaceSwitcher activeWorkspace={activeWorkspace} />
         </div>
 
-        {/* Search Middle */}
-        <div className="relative mx-4 hidden max-w-md flex-1 md:block">
+        <div className="dash-search-wrap">
           <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-            <svg className="h-4 w-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <svg className="h-4 w-4 text-[hsl(var(--muted))]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
             </svg>
@@ -449,16 +544,32 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
             placeholder="Search videos and folders..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-9 pr-3 text-xs font-medium text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-300 focus:bg-white focus:ring-4 focus:ring-orange-500/5"
+            className="dash-search"
           />
         </div>
 
-        {/* Right Nav */}
-        <div className="flex items-center gap-3">
-          {/* User profile avatar icon */}
-          <button className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-500 text-xs font-bold text-white shadow-sm shadow-orange-500/10" aria-label="Account Menu">
-            {userInitial}
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Feedback"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.184-4.183a1.14 1.14 0 0 1 .778-.332 48.294 48.294 0 0 0 5.83-.498c1.585-.233 2.708-1.626 2.708-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+            </svg>
           </button>
+          <NotificationPanel />
+          <button
+            type="button"
+            onClick={() => setShowFolderModal(true)}
+            className="icon-button"
+            aria-label="Folders"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
+            </svg>
+          </button>
+          <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
         </div>
       </header>
 
@@ -469,30 +580,30 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
           {/* HEADER SECTION: WORKSPACE AND ACTIONS */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-2">
-              <h1 className="text-2xl font-bold tracking-tight text-gray-950 sm:text-3xl">{activeWorkspace.name}</h1>
+              <h1 className="page-title text-2xl sm:text-[28px]">{activeWorkspace.name}</h1>
               <div className="flex flex-wrap gap-2">
-                <span className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-500 shadow-sm">
-                  <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-                  {videos.length} / 10 videos
+                <span className="stat-chip">
+                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
+                  {planLimits.maxVideos === null
+                    ? `${videos.length} videos`
+                    : `${videos.length} / ${planLimits.maxVideos} videos`}
                 </span>
-                <span className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-500 shadow-sm">
-                  <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                  100MB / video
+                <span className="stat-chip">
+                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
+                  {formatMaxFileSize(planLimits.maxBytesPerVideo)} / video
                 </span>
-                <span className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-500 shadow-sm">
-                  <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                  5 minutes / video
+                <span className="stat-chip">
+                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                  {formatMaxDuration(planLimits.maxDurationSeconds)} / video
                 </span>
               </div>
             </div>
 
-            {/* ACTION BUTTONS ROW */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* List / Grid selector */}
-              <div className="flex items-center rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">
+              <div className="segment">
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'list' ? 'bg-orange-50 text-orange-600' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-900'}`}
+                  className={`segment-btn h-8 w-8 ${viewMode === 'list' ? 'segment-btn-active' : ''}`}
                   aria-label="List View"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -501,7 +612,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                 </button>
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`flex h-8 w-8 items-center justify-center rounded-md transition ${viewMode === 'grid' ? 'bg-orange-50 text-orange-600' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-900'}`}
+                  className={`segment-btn h-8 w-8 ${viewMode === 'grid' ? 'segment-btn-active' : ''}`}
                   aria-label="Grid View"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -514,53 +625,58 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
               </div>
 
               {/* Create Folder button */}
-              <button
-                onClick={() => setShowFolderModal(true)}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
-              >
-                <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+              <button type="button" onClick={() => setShowFolderModal(true)} className="btn-secondary !h-9">
+                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
                 Create Folder
               </button>
 
-              {/* Bulk Move button */}
-              <button
-                onClick={() => setShowBulkMoveModal(true)}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
-              >
-                <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+              <button type="button" onClick={openBulkMoveModal} className="btn-secondary !h-9">
+                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0-4.5 4.5M21 7.5H7.5" />
                 </svg>
                 Bulk Move
               </button>
 
-              {/* Record button */}
               <button
+                type="button"
                 onClick={() => {
                   setShowRecordModal(true);
                   setIsRecording(false);
                   setRecordingSeconds(0);
                 }}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+                className="btn-secondary !h-9"
               >
-                <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M12 18.75H4.5a2.25 2.25 0 0 1-2.25-2.25V9a2.25 2.25 0 0 1 2.25-2.25H12A2.25 2.25 0 0 1 14.25 9v7.5A2.25 2.25 0 0 1 12 18.75Z" />
                 </svg>
                 Record
               </button>
 
-              {/* Upload button in primary orange */}
               <button
+                type="button"
+                onClick={() => setShowImportModal(true)}
+                className="btn-secondary !h-9"
+              >
+                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                </svg>
+                Import URL
+              </button>
+
+              <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="btn-orange !h-9 flex items-center gap-2 rounded-lg px-3.5 text-xs font-bold shadow-sm"
-                disabled={uploading}
+                className="btn-orange !h-9 flex items-center gap-2 rounded-lg px-3.5 text-xs font-bold shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={uploading || atVideoLimit}
+                title={atVideoLimit ? 'Video limit reached for your plan' : undefined}
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
                 <span>Upload Video</span>
-                <span className="h-4 w-[1px] bg-orange-400/80 mx-0.5" />
+                <span className="mx-0.5 h-4 w-[1px] bg-white/30" />
                 <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
                 </svg>
@@ -581,44 +697,52 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
           {/* FREE PLAN UPGRADE BANNER */}
           {activeWorkspace.plan === 'free' && (
-            <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-orange-500 via-orange-600 to-amber-500 px-6 py-5 text-white shadow-md">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_50%,rgba(255,255,255,0.15),transparent_40%)]" />
-              <div className="relative flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div className="plan-upgrade-banner">
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+              <div className="relative z-[1] flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
-                  <h3 className="text-lg font-bold tracking-tight">You're using free plan</h3>
-                  <p className="mt-1 text-xs font-semibold text-orange-100/90">Upgrade your plan to add more videos</p>
+                  <h3 className="text-lg font-bold tracking-tight">You&apos;re on the free plan</h3>
+                  <p className="mt-1 text-xs font-medium text-white/75">Upgrade to upload more videos and higher limits</p>
                 </div>
-                <button
-                  onClick={() => alert('Plan subscription pricing coming soon!')}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-white px-4 text-xs font-bold text-orange-600 shadow-sm transition hover:bg-orange-50 active:scale-95"
+                <Link
+                  href="/settings/billing"
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-white px-4 text-xs font-bold text-gray-950 shadow-[0_2px_12px_rgba(0,0,0,0.2)] hover:bg-white/95"
                 >
                   View plans
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                   </svg>
-                </button>
+                </Link>
               </div>
             </div>
           )}
 
-          {/* FOLDERS OVERVIEW (mocked client state if folder exists) */}
           {folders.length > 0 && (
             <div className="space-y-2">
-              <h2 className="text-[13px] font-semibold text-gray-500 uppercase tracking-wider">Folders ({folders.length})</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="section-label">Folders ({folders.length})</h2>
+                {activeFolderId && (
+                  <button type="button" onClick={() => setActiveFolderId(null)} className="chip-clear">
+                    Clear filter
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
                 {folders.map((f) => (
-                  <div
+                  <button
+                    type="button"
                     key={f.id}
-                    className="group flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:bg-orange-50/20"
+                    onClick={() => setActiveFolderId(activeFolderId === f.id ? null : f.id)}
+                    className={`folder-tile ${activeFolderId === f.id ? 'folder-tile-active' : ''}`}
                   >
-                    <svg className="h-8 w-8 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="h-8 w-8 text-[hsl(var(--accent))]" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                     </svg>
                     <div className="mt-2 min-w-0">
-                      <p className="truncate text-xs font-bold text-gray-900">{f.name}</p>
-                      <p className="text-[10px] font-semibold text-gray-400 mt-0.5">{f.videoCount} videos</p>
+                      <p className="truncate text-xs font-semibold text-[hsl(var(--foreground))]">{f.name}</p>
+                      <p className="card-meta mt-0.5">{f.videoCount} videos</p>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -626,175 +750,81 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
           {/* VIDEOS SECTION TITLE */}
           <div className="space-y-4">
-            <h2 className="text-[13px] font-bold text-gray-500 uppercase tracking-wider">Videos ({filteredVideos.length})</h2>
+            <h2 className="section-label">Videos ({filteredVideos.length})</h2>
 
-            {/* UPLOADING STATE CARD IN GRID */}
             {uploading && viewMode === 'grid' && (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                <article className="overflow-hidden rounded-xl border border-dashed border-orange-300 bg-orange-50/20 shadow-sm p-4 space-y-4 flex flex-col justify-between min-h-[220px]">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500 text-white animate-pulse">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5h10.5" />
-                      </svg>
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="truncate text-xs font-bold text-gray-900">Uploading video...</h3>
-                      <p className="text-[10px] text-gray-400 font-semibold truncate">{uploadSpeed || 'Connecting'}</p>
-                    </div>
+              <div className="asset-grid">
+                <article className="product-card-uploading">
+                  <div>
+                    <span className="product-card-badge">Uploading</span>
+                    <h3 className="product-card-title mt-4">New video</h3>
+                    <p className="product-card-subtitle">{uploadSpeed || 'Connecting…'}</p>
+                    <p className="product-card-desc">{timeRemaining || 'Estimating time remaining…'}</p>
                   </div>
-
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[11px] font-bold text-gray-600">
-                      <span>{timeRemaining || 'Estimating...'}</span>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-semibold text-[hsl(var(--muted))]">
+                      <span>Progress</span>
                       <span>{uploadProgress}%</span>
                     </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
-                      <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                    <div className="progress-track h-2">
+                      <div className="progress-fill" style={{ width: `${uploadProgress}%` }} />
                     </div>
                   </div>
                 </article>
               </div>
             )}
 
-            {/* VIDEO CONTENTS */}
             {filteredVideos.length === 0 && !uploading ? (
-              <div className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white px-6 text-center shadow-sm">
-                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 text-gray-400 border border-gray-100">
+              <div className="empty-studio !mx-0 min-h-[260px]">
+                <div className="empty-studio-icon">
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M12 18.75H4.5a2.25 2.25 0 0 1-2.25-2.25V9a2.25 2.25 0 0 1 2.25-2.25H12A2.25 2.25 0 0 1 14.25 9v7.5A2.25 2.25 0 0 1 12 18.75Z" />
                   </svg>
                 </div>
-                <h3 className="text-xs font-bold text-gray-900 uppercase">No videos found</h3>
-                <p className="mt-1 max-w-xs text-xs font-medium text-gray-500">
-                  {searchQuery ? 'Adjust your search terms to find matching assets.' : 'Upload or record your first video asset to get started.'}
+                <h3 className="text-sm font-semibold text-[hsl(var(--foreground))]">No videos found</h3>
+                <p className="page-subtitle mt-1 max-w-xs">
+                  {searchQuery ? 'Try different search terms.' : 'Upload or record your first video to get started.'}
                 </p>
               </div>
             ) : viewMode === 'grid' ? (
-              /* GRID VIEW */
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              <div className="asset-grid">
                 {filteredVideos.map((video) => {
                   const meta = statusMeta[video.status as Video['status']] || { label: 'Unknown', tone: 'danger', progress: 0 };
                   const thumbnail = thumbnailFor(video);
-                  
+
                   return (
-                    <article
+                    <VideoGridCard
                       key={video.id}
-                      className="group flex flex-col justify-between overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-gray-300"
-                    >
-                      {/* Aspect Ratio Video Box */}
-                      <div
-                        onClick={() => openVideo(video)}
-                        className="video-thumb relative aspect-video w-full overflow-hidden cursor-pointer bg-gray-950"
-                      >
-                        {thumbnail ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbnail} alt="" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.02]" />
-                        ) : (
-                          <div className="h-full w-full bg-gradient-to-tr from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
-                            <svg className="h-8 w-8 text-gray-700 transition group-hover:scale-105" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                            </svg>
-                          </div>
-                        )}
-                        <div className="absolute inset-0 bg-black/5 opacity-0 transition group-hover:opacity-100" />
-                        
-                        {/* Overlays */}
-                        {/* Duration: bottom-left */}
-                        <div className="absolute bottom-2.5 left-2.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">
-                          {formatDuration(video.durationSeconds)}
-                        </div>
-
-                        {/* Status badge: top-right */}
-                        <div className="absolute top-2.5 right-2.5">
-                          {video.status === 'ready' ? (
-                            <span className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 shadow-sm">
-                              <svg className="h-3 w-3 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                              </svg>
-                              Success
-                            </span>
-                          ) : video.status === 'error' ? (
-                            <span className="flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700 shadow-sm">
-                              Failed
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 shadow-sm animate-pulse">
-                              {meta.label}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Card Content & Details */}
-                      <div className="p-3.5 space-y-3">
-                        <div className="min-w-0">
-                          <h3 onClick={() => openVideo(video)} className="cursor-pointer truncate text-[13px] font-bold text-gray-900 hover:text-orange-500 transition-colors">{video.title}</h3>
-                          <p className="mt-0.5 truncate text-[11px] font-semibold text-gray-400">{getRelativeTimeString(video.createdAt)}</p>
-                        </div>
-                      </div>
-
-                      {/* Card Footer: views count, resolution and dots menu */}
-                      <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-3.5 py-2.5">
-                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400">
-                          <span className="flex items-center gap-1">
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><circle cx="12" cy="12" r="3" /></svg>
-                            0
-                          </span>
-                          <span className="text-gray-300">|</span>
-                          <span>{getResolutionString(video)}</span>
-                        </div>
-
-                        {/* Dropdown Options Button */}
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveMenuVideoId(activeMenuVideoId === video.id ? null : video.id);
-                            }}
-                            className="flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:border-gray-300 hover:text-gray-900 focus:outline-none"
-                            aria-label="Options"
-                          >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M10 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" />
-                            </svg>
-                          </button>
-
-                          {activeMenuVideoId === video.id && (
-                            <div className="absolute right-0 bottom-full mb-1 w-44 origin-bottom-right rounded-lg border border-gray-200 bg-white p-1 shadow-lg ring-1 ring-black/5 z-40">
-                              <button
-                                onClick={() => openVideo(video)}
-                                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs font-semibold text-gray-700 hover:bg-orange-50 hover:text-orange-600"
-                              >
-                                Open Video
-                              </button>
-                              <button
-                                onClick={() => copyComponentId(video)}
-                                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs font-semibold text-gray-700 hover:bg-orange-50 hover:text-orange-600"
-                              >
-                                Copy Component ID
-                              </button>
-                              <div className="my-1 border-t border-gray-100" />
-                              <button
-                                onClick={() => deleteVideo(video.id)}
-                                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50"
-                              >
-                                Delete Video
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </article>
+                      video={video}
+                      meta={meta}
+                      thumbnail={thumbnail}
+                      onOpen={() => openVideo(video)}
+                      onMenuToggle={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuVideoId(activeMenuVideoId === video.id ? null : video.id);
+                      }}
+                      menuOpen={activeMenuVideoId === video.id}
+                      onCopyId={() => copyComponentId(video)}
+                      onDownload={() => downloadVideo(video)}
+                      onDelete={() => deleteVideo(video.id)}
+                      showMove={folders.length > 0}
+                      onMove={() => {
+                        setActiveMenuVideoId(null);
+                        setSingleMoveVideoId(video.id);
+                        setBulkMoveFolder('');
+                      }}
+                      formatDuration={formatDuration}
+                      getRelativeTimeString={getRelativeTimeString}
+                      getResolutionString={getResolutionString}
+                    />
                   );
                 })}
               </div>
             ) : (
-              /* LIST VIEW */
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                <table className="w-full border-collapse text-left text-xs">
+              <div className="list-table-wrap">
+                <table className="list-table">
                   <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50/75 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                    <tr>
                       <th className="px-4 py-3">Video Title & File</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Duration</th>
@@ -803,67 +833,52 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                       <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody>
                     {filteredVideos.map((video) => {
                       const meta = statusMeta[video.status as Video['status']] || { label: 'Unknown', tone: 'danger', progress: 0 };
                       const thumbnail = thumbnailFor(video);
                       return (
-                        <tr
-                          key={video.id}
-                          onClick={() => openVideo(video)}
-                          className="group cursor-pointer transition hover:bg-gray-50/50"
-                        >
-                          <td className="px-4 py-3 min-w-0">
+                        <tr key={video.id} onClick={() => openVideo(video)} className="list-row group">
+                          <td className="min-w-0">
                             <div className="flex items-center gap-3">
-                              <div className="h-10 w-[71px] flex-shrink-0 overflow-hidden rounded bg-gray-950">
+                              <div className="list-thumb">
                                 {thumbnail ? (
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img src={thumbnail} alt="" className="h-full w-full object-cover" />
                                 ) : (
-                                  <div className="h-full w-full bg-gradient-to-tr from-gray-900 to-gray-800 flex items-center justify-center">
-                                    <svg className="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
+                                  <div className="video-thumb-fallback flex h-full w-full items-center justify-center">
+                                    <svg className="h-4 w-4 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
                                   </div>
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <span className="block truncate font-bold text-gray-900 group-hover:text-orange-600 transition-colors">
+                                <span className="block truncate font-semibold text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--accent))]">
                                   {video.title}
                                 </span>
-                                <span className="block truncate text-[10px] font-semibold text-gray-400 mt-0.5">
+                                <span className="card-meta mt-0.5 block truncate !text-[10px]">
                                   {video.originalFilename}
                                 </span>
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-3">
-                            {video.status === 'ready' ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                                Success
-                              </span>
-                            ) : video.status === 'error' ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">
-                                Failed
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 animate-pulse">
-                                {meta.label}
-                              </span>
-                            )}
+                          <td>
+                            <StatusBadge status={video.status} label={meta.label} />
                           </td>
-                          <td className="px-4 py-3 font-semibold text-gray-500">
+                          <td className="font-medium text-[hsl(var(--muted))]">
                             {formatDuration(video.durationSeconds)}
                           </td>
-                          <td className="px-4 py-3 font-semibold text-gray-500">
+                          <td className="font-medium text-[hsl(var(--muted))]">
                             {getRelativeTimeString(video.createdAt)}
                           </td>
-                          <td className="px-4 py-3 font-semibold text-gray-500">
+                          <td className="font-medium text-[hsl(var(--muted))]">
                             {formatSize(video.sizeBytes)}
                           </td>
-                          <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <td className="text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-2">
                               <button
+                                type="button"
                                 onClick={() => copyComponentId(video)}
-                                className="rounded border border-gray-200 bg-white p-1 text-gray-400 hover:border-gray-300 hover:text-gray-900 shadow-sm"
+                                className="icon-btn"
                                 title="Copy Component ID"
                               >
                                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
@@ -872,8 +887,19 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                                 </svg>
                               </button>
                               <button
+                                type="button"
+                                onClick={() => downloadVideo(video)}
+                                className="icon-btn"
+                                title="Download Video"
+                              >
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => deleteVideo(video.id)}
-                                className="rounded border border-gray-200 bg-white p-1 text-red-500 hover:border-red-300 hover:bg-red-50 shadow-sm"
+                                className="icon-btn icon-btn-danger"
                                 title="Delete Video"
                               >
                                 <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
@@ -895,10 +921,10 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
       {/* CREATE FOLDER MODAL */}
       {showFolderModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-in-up">
-          <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-6 shadow-xl">
-            <h3 className="text-base font-bold text-gray-950">Create Folder</h3>
-            <p className="mt-1 text-xs text-gray-500">Organize your stream assets by client or project.</p>
+        <div className="modal-overlay">
+          <div className="modal-panel-sm">
+            <h3 className="page-title text-base">Create Folder</h3>
+            <p className="page-subtitle">Group videos by client, campaign, or project.</p>
             <form onSubmit={handleCreateFolderSubmit} className="mt-4 space-y-4">
               <input
                 type="text"
@@ -906,20 +932,13 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                 placeholder="Folder name"
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/5"
+                className="input-minimal"
               />
               <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowFolderModal(false)}
-                  className="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
-                >
+                <button type="button" onClick={() => setShowFolderModal(false)} className="btn-secondary !h-8">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="btn-orange rounded-lg h-8 px-4 text-xs font-bold"
-                >
+                <button type="submit" className="btn-accent !h-8">
                   Create Folder
                 </button>
               </div>
@@ -930,22 +949,64 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
 
       {/* BULK MOVE MODAL */}
       {showBulkMoveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-in-up">
-          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-xl">
-            <h3 className="text-base font-bold text-gray-950">Bulk Move Videos</h3>
-            <p className="mt-1 text-xs text-gray-500">Relocate multiple stream assets to a folder.</p>
-            <div className="mt-4 space-y-4">
+        <div className="modal-overlay">
+          <div className="modal-panel-md flex max-h-[85vh] flex-col">
+            <h3 className="page-title text-base">Bulk Move Videos</h3>
+            <p className="page-subtitle">Select videos and a destination folder.</p>
+            <div className="mt-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="section-label !text-[10px]">Videos</label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setBulkSelectedIds(
+                        bulkSelectedIds.length === videos.length
+                          ? []
+                          : videos.map((v) => v.id),
+                      )
+                    }
+                    className="text-[11px] font-bold text-[hsl(var(--accent))] hover:underline"
+                  >
+                    {bulkSelectedIds.length === videos.length ? 'Deselect all' : 'Select all'}
+                  </button>
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-[hsl(var(--hairline))] divide-y divide-[hsl(var(--hairline))]">
+                  {videos.length === 0 ? (
+                    <p className="p-3 text-center text-xs text-[hsl(var(--muted))]">No videos in this workspace.</p>
+                  ) : (
+                    videos.map((v) => (
+                      <label
+                        key={v.id}
+                        className="flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--sidebar))]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={bulkSelectedIds.includes(v.id)}
+                          onChange={(e) => {
+                            setBulkSelectedIds((prev) =>
+                              e.target.checked ? [...prev, v.id] : prev.filter((id) => id !== v.id),
+                            );
+                          }}
+                          className="rounded border-[hsl(var(--hairline))] text-[hsl(var(--accent))] focus:ring-[hsl(var(--accent))]"
+                        />
+                        <span className="truncate">{v.title}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-gray-400 uppercase">Target Folder</label>
+                <label className="section-label !text-[10px]">Target Folder</label>
                 {folders.length === 0 ? (
-                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-center text-xs font-semibold text-gray-500">
-                    No folders created yet. Please create a folder first.
+                  <div className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--sidebar))] p-3 text-center text-xs font-medium text-[hsl(var(--muted))]">
+                    No folders yet. Create a folder first.
                   </div>
                 ) : (
                   <select
                     value={bulkMoveFolder}
                     onChange={(e) => setBulkMoveFolder(e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold outline-none focus:border-orange-500"
+                    className="input-minimal"
                   >
                     <option value="">Select destination...</option>
                     {folders.map((f) => (
@@ -956,23 +1017,21 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowBulkMoveModal(false)}
-                  className="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
-                >
+                <button type="button" onClick={() => setShowBulkMoveModal(false)} className="btn-secondary !h-8">
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
-                    if (!bulkMoveFolder) return;
-                    alert('Moved selected videos successfully!');
-                    setShowBulkMoveModal(false);
-                  }}
-                  className="btn-orange rounded-lg h-8 px-4 text-xs font-bold"
-                  disabled={folders.length === 0 || !bulkMoveFolder}
+                  type="button"
+                  onClick={() => moveVideosToFolder(bulkSelectedIds, bulkMoveFolder)}
+                  className="btn-accent !h-8"
+                  disabled={
+                    folders.length === 0 ||
+                    !bulkMoveFolder ||
+                    bulkSelectedIds.length === 0 ||
+                    movingVideos
+                  }
                 >
-                  Move Videos
+                  {movingVideos ? 'Moving…' : `Move ${bulkSelectedIds.length || ''} video${bulkSelectedIds.length === 1 ? '' : 's'}`}
                 </button>
               </div>
             </div>
@@ -980,16 +1039,112 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
         </div>
       )}
 
+      {/* SINGLE VIDEO MOVE MODAL */}
+      {singleMoveVideoId && (
+        <div className="modal-overlay">
+          <div className="modal-panel-sm">
+            <h3 className="page-title text-base">Move to folder</h3>
+            <p className="page-subtitle truncate">
+              {videos.find((v) => v.id === singleMoveVideoId)?.title}
+            </p>
+            <div className="mt-4 space-y-4">
+              <select
+                value={bulkMoveFolder}
+                onChange={(e) => setBulkMoveFolder(e.target.value)}
+                className="input-minimal"
+              >
+                <option value="">Select folder...</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSingleMoveVideoId(null);
+                    setBulkMoveFolder('');
+                  }}
+                  className="btn-secondary !h-8"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveVideosToFolder([singleMoveVideoId], bulkMoveFolder)}
+                  className="btn-accent !h-8"
+                  disabled={!bulkMoveFolder || movingVideos}
+                >
+                  {movingVideos ? 'Moving…' : 'Move'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMPORT URL MODAL */}
+      {showImportModal && (
+        <div className="modal-overlay">
+          <div className="modal-panel-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="page-title text-base">Import via URL</h3>
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
+                disabled={importing}
+              >
+                <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleImportUrl} className="mt-4 space-y-4">
+              <div>
+                <label htmlFor="import-url" className="section-label !text-[10px] mb-1.5 block">
+                  Video URL (YouTube, Vimeo, Loom, TikTok, etc.)
+                </label>
+                <input
+                  id="import-url"
+                  type="url"
+                  required
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  placeholder="https://youtube.com/watch?v=..."
+                  className="input-minimal w-full"
+                  disabled={importing}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(false)}
+                  className="btn-secondary !h-8"
+                  disabled={importing}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-accent !h-8"
+                  disabled={importing || !importUrl.trim()}
+                >
+                  {importing ? 'Importing...' : 'Start Import'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* WEBCAM / SCREEN RECORDER PLAYFUL MODAL */}
       {showRecordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in-up">
-          <div className="w-full max-w-lg rounded-xl border border-gray-800 bg-gray-900 p-6 text-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className={`absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75 ${isRecording ? 'animate-ping' : ''}`}></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                </span>
+        <div className="modal-overlay !bg-[hsl(240_6%_10%/0.72)]">
+          <div className="modal-panel-md max-w-lg !border-zinc-800 !bg-zinc-950 !p-6 text-white !shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)]">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="flex items-center gap-2 text-base font-semibold">
+                <span className="inline-flex h-2 w-2 rounded-full bg-red-500" />
                 Record Studio
               </h3>
               <button
@@ -1013,7 +1168,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                   
                   {/* Camera view - pulsing recording ring */}
                   <div className="relative z-10 flex flex-col items-center gap-3">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-red-500 bg-red-500/10 p-3 text-red-500 animate-pulse">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-red-500 bg-red-500/10 p-3 text-red-500">
                       <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25Z" />
                       </svg>
@@ -1025,7 +1180,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                   </div>
 
                   {/* Corner indicator */}
-                  <div className="absolute top-3 left-3 bg-red-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
+                  <div className="absolute top-3 left-3 rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
                     Live
                   </div>
                 </>
@@ -1067,7 +1222,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
                     onClick={startRecordingAction}
                     className="flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-4 text-xs font-bold text-white transition hover:bg-red-500 shadow-lg shadow-red-600/20"
                   >
-                    <span className="h-2.5 w-2.5 rounded-full bg-white animate-ping" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-white" />
                     Start Recording
                   </button>
                 )}

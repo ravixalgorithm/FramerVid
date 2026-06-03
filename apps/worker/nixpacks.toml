@@ -1,0 +1,3 @@
+# Railway / Nixpacks: FFmpeg required for HLS transcoding
+[phases.setup]
+nixPkgs = ['nodejs_20', 'ffmpeg']

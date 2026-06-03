@@ -4,6 +4,9 @@
   "packageManager": "pnpm@10.8.1",
   "scripts": {
     "build": "turbo run build",
+    "railway:start": "pnpm --filter @framevid/db db:push && pnpm --filter @framevid/dashboard start",
+    "railway:worker:start": "pnpm --filter @framevid/worker start",
+    "railway:build": "pnpm build --filter=@framevid/dashboard --filter=@framevid/db --filter=@framevid/queue --filter=@framevid/types --filter=@framevid/worker",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "turbo run test",

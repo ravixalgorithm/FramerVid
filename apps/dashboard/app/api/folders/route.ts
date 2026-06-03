@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { db, folders, workspaceMembers, videoFolders, videos } from '@framevid/db';
-import { eq, and, sql } from 'drizzle-orm';
+import { db, folders, videoFolders, videos } from '@framevid/db';
+import { eq, sql } from 'drizzle-orm';
 import { getCurrentUser } from '../../lib/auth';
+import { assertWorkspaceAccess } from '../../lib/workspace-access';
 
 const createSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -10,16 +11,6 @@ const createSchema = z.object({
   parentFolderId: z.string().uuid().optional().nullable(),
 });
 
-async function assertWorkspaceAccess(userId: string, workspaceId: string) {
-  const [membership] = await db
-    .select()
-    .from(workspaceMembers)
-    .where(
-      and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId))
-    )
-    .limit(1);
-  return Boolean(membership);
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -90,7 +81,7 @@ export async function POST(req: NextRequest) {
 
     const { workspaceId, name, parentFolderId } = parsed.data;
 
-    if (!(await assertWorkspaceAccess(user.id, workspaceId))) {
+    if (!(await assertWorkspaceAccess(user.id, workspaceId, ['admin', 'editor']))) {
       return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
     }
 

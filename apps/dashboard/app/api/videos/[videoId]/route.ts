@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, videos } from '@framevid/db';
 import { eq } from 'drizzle-orm';
-import { getCurrentUser } from '../../../lib/auth';
+import { getCurrentUser, hashPassword } from '../../../lib/auth';
+import { assertWorkspaceAccess } from '../../../lib/workspace-access';
 import type { VideoSettings } from '@framevid/types';
 
 const patchSchema = z.object({
@@ -35,6 +36,10 @@ export async function PATCH(
       return NextResponse.json({ error: 'Video not found', code: 'NOT_FOUND' }, { status: 404 });
     }
 
+    if (!(await assertWorkspaceAccess(user.id, video.workspaceId, ['admin', 'editor']))) {
+      return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
+    }
+
     // 2. Parse request body
     const body = await req.json();
     const parsed = patchSchema.safeParse(body);
@@ -46,6 +51,12 @@ export async function PATCH(
     }
 
     const { title, description, posterUrl, settings: newSettings } = parsed.data;
+
+    // Handle password hashing if provided
+    if (newSettings && newSettings.privacy === 'password' && newSettings.password) {
+      newSettings.passwordHash = hashPassword(newSettings.password);
+      delete newSettings.password; // Don't store plaintext
+    }
 
     // Merge new settings with existing settings in database
     const mergedSettings: VideoSettings = {
@@ -97,6 +108,10 @@ export async function DELETE(
     const video = matchedVideos[0];
     if (!video) {
       return NextResponse.json({ error: 'Video not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    if (!(await assertWorkspaceAccess(user.id, video.workspaceId, ['admin', 'editor']))) {
+      return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
     }
 
     // 2. Delete the record

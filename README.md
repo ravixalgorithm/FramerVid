@@ -2,7 +2,7 @@
 
 Video hosting and delivery built for Framer designers — upload in the dashboard, play via a native Framer code component (HLS, motion effects, analytics).
 
-See [prd.md](./prd.md) for product spec and [status.md](./status.md) for build progress.
+See [prd.md](./prd.md) for product spec, [SYSTEMDESIGN.md](./SYSTEMDESIGN.md) for architecture, and [status.md](./status.md) for build progress.
 
 ## Stack
 
@@ -10,6 +10,7 @@ See [prd.md](./prd.md) for product spec and [status.md](./status.md) for build p
 - **Component:** React, Framer Motion, hls.js (Framer Marketplace target)
 - **Worker:** BullMQ, FFmpeg, Cloudflare R2
 - **Data:** Postgres (Supabase-compatible), Redis (Upstash/local)
+- **Engagement analytics:** Heartbeat beacons (5s buckets) → `video_events`; public popularity curve on the player; dashboard retention heatmap with AI drop-off insights (Deepgram + OpenAI)
 
 ## Prerequisites
 
@@ -17,7 +18,7 @@ See [prd.md](./prd.md) for product spec and [status.md](./status.md) for build p
 - pnpm 10+
 - PostgreSQL
 - Redis
-- FFmpeg (optional — without it, worker uses a public test HLS stream)
+- FFmpeg (worker transcoding; dashboard **Select frame** thumbnail capture uses browser canvas first, then server ffmpeg — `winget install Gyan.FFmpeg` on Windows)
 
 ## Quick start
 

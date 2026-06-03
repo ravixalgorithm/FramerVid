@@ -24,10 +24,8 @@ framevid/
 │   │   └── package.json
 │   └── worker/             # Fly.io transcoding worker
 │       ├── src/
-│       │   ├── processor.ts         # FFmpeg pipeline
-│       │   ├── queue.ts             # BullMQ consumer
-│       │   ├── uploader.ts          # R2 upload after transcode
-│       │   └── captions.ts          # Whisper API integration
+│       │   ├── processor.ts         # BullMQ consumer + FFmpeg + Deepgram handoff
+│       │   └── r2.ts                # R2 download/upload helpers
 │       └── Dockerfile
 ├── packages/
 │   ├── db/                 # Drizzle ORM schema + migrations (Postgres)
@@ -72,8 +70,7 @@ pnpm --filter @framevid/db db:migrate
 Environment Variables
 bash# apps/dashboard/.env.local
 NEXT_PUBLIC_API_URL=
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
-CLERK_SECRET_KEY=
+JWT_SECRET=                      # Custom session signing (not Clerk)
 DATABASE_URL=                    # Supabase Postgres connection string
 REDIS_URL=                       # Upstash Redis URL
 CLOUDFLARE_R2_ACCOUNT_ID=
@@ -81,10 +78,10 @@ CLOUDFLARE_R2_ACCESS_KEY_ID=
 CLOUDFLARE_R2_SECRET_ACCESS_KEY=
 CLOUDFLARE_R2_BUCKET_NAME=
 CLOUDFLARE_R2_PUBLIC_URL=        # https://cdn.framevid.co
-CLICKHOUSE_URL=
-CLICKHOUSE_USER=
-CLICKHOUSE_PASSWORD=
-OPENAI_API_KEY=                  # Whisper API for captions
+CLICKHOUSE_URL=                  # Planned — events currently in Postgres
+OPENAI_API_KEY=                  # AI insights + friction analysis
+DEEPGRAM_API_KEY=                # Auto-captions (webhook)
+DEEPGRAM_WEBHOOK_SECRET=         # Verify callback signatures
 RESEND_API_KEY=
 
 # apps/worker/.env
@@ -94,7 +91,9 @@ CLOUDFLARE_R2_ACCOUNT_ID=
 CLOUDFLARE_R2_ACCESS_KEY_ID=
 CLOUDFLARE_R2_SECRET_ACCESS_KEY=
 CLOUDFLARE_R2_BUCKET_NAME=
-OPENAI_API_KEY=
+CLOUDFLARE_R2_PUBLIC_URL=
+DEEPGRAM_API_KEY=
+DASHBOARD_PUBLIC_URL=            # Deepgram callback base URL
 
 2. Architecture Decisions
 These are settled decisions. Do not re-architect without explicit instruction.
@@ -102,7 +101,7 @@ These are settled decisions. Do not re-architect without explicit instruction.
 Storage is always Cloudflare R2. Never suggest AWS S3 as a drop-in unless asked. R2 has zero egress fees — this is the core cost model. All R2 keys follow the pattern /{workspace_id}/{video_id}/{type}/ where type is raw, transcoded, thumbnails, or captions.
 HLS-only delivery. All videos are transcoded to HLS (three variants: 360p, 720p, 1080p + master manifest). Progressive MP4 delivery is not supported. hls.js handles non-Safari browsers; Safari uses native HLS.
 Transcoding runs on Fly.io workers, not Lambda. FFmpeg binaries are too large for Lambda cold starts at acceptable latency. Workers are persistent Node.js processes on Fly.io with BullMQ consuming from the Redis queue.
-ClickHouse for all event data. Video play events, progress milestones, and analytics data go to ClickHouse. Never write high-volume event data to Postgres.
+Postgres `video_events` for all player telemetry today (including `heartbeat` every 5s). ClickHouse migration is planned per PRD — do not assume ClickHouse is available. When adding analytics queries, aggregate in SQL; do not load raw events into the client.
 Postgres (via Drizzle ORM) for all relational data. Users, workspaces, videos metadata, settings, folders, team members. Never use raw SQL — always go through Drizzle.
 Framer component uses addPropertyControls. All user-configurable properties are exposed via Framer's property panel. Never use React state for things that should be property controls.
 Canvas vs published mode is always handled. Every new Framer component feature must check RenderTarget.current() === RenderTarget.canvas and render a safe, static fallback on canvas. Animated or data-fetching code must not run in canvas mode.
@@ -131,6 +130,9 @@ The component must work when imported cold — no dependencies on dashboard bein
 All external fetches go to https://api.framevid.co — never hardcode staging or localhost URLs in shipped code.
 hls.js is loaded dynamically (import('hls.js')) — never as a static import, to keep the component bundle small.
 Analytics beacon uses navigator.sendBeacon only — never fetch for event reporting. Fire and forget.
+Generate `sessionId` once per mount (`crypto.randomUUID()`) and include it on every event.
+Emit `heartbeat` while playing: one beacon per 5-second bucket (`eventData.bucket = floor(currentTime/5)*5`), deduped per session.
+Public popularity data comes from `GET /api/v1/videos/[id]/meta` (`popularityCurve`, normalized 0–100). Private retention + AI friction use authenticated `GET /api/videos/[id]/analytics` only.
 Motion effects are defined in apps/component/src/effects/variants.ts as a Record<EffectName, MotionVariants> map. Add new effects there only.
 Property control order in addPropertyControls must match the visual grouping in the PRD: VIDEO → APPEARANCE → MOTION EFFECT → INTERACTION → ANALYTICS.
 
@@ -143,7 +145,7 @@ The dashboard must look like a Framer product — minimal, high contrast, genero
 API Routes
 
 All API routes validate request body with Zod before doing anything else.
-All API routes authenticate via Clerk middleware before any business logic.
+Dashboard API routes authenticate via custom JWT session cookie (`app/lib/auth.ts`) and workspace access helpers. Public routes: meta (CORS), events beacon, v1 aliases.
 Return consistent shapes: { data: T } on success, { error: string, code: string } on failure.
 Never return 200 with an error body. Use appropriate HTTP status codes.
 Rate limiting is applied at the middleware level for public endpoints (video metadata fetch, analytics beacon).
@@ -154,6 +156,15 @@ All FFmpeg commands are wrapped in a typed runFFmpeg(args: string[]): Promise<vo
 Never shell-escape user input directly into FFmpeg commands. Use the args array pattern only.
 Every job must update the video status in Postgres at the start (processing) and on completion (ready) or failure (error).
 Failed jobs retry 3 times with exponential backoff via BullMQ config. After 3 failures, video status is set to error and the original raw file is preserved in R2 for manual inspection.
+
+Analytics and heartbeat (see SYSTEMDESIGN.md §4.5)
+
+Single ingestion path: `POST /api/v1/events` → `video_events`. No second tracker in the Framer component.
+Event types include `heartbeat` (5s buckets), `video_play`, `video_pause`, `video_progress`, form/CTA events.
+`GET .../meta`: may include aggregated `popularityCurve` (normalized counts) — keep queries aggregated, optional short cache.
+`GET .../analytics`: workspace-authenticated; retention % per bucket, cliff detection, OpenAI friction copy cached in `aiInsights`.
+AI friction transcript segments come from Deepgram utterances stored at `{workspaceId}/{videoId}/captions/transcript.json` after webhook M2.
+Do not block `video.status = ready` on AI completion; captions and insights arrive asynchronously.
 
 
 4. Boundaries
@@ -182,7 +193,7 @@ Never do
 
 Push directly to main — all changes go through PRs
 Hardcode any API keys, secrets, or credentials anywhere in the codebase
-Write video event data to Postgres — ClickHouse only
+Write unaggregated heartbeat queries in hot paths without indexes — add `(video_id, event_type)` index if missing
 Run FFmpeg with unsanitized user input
 Remove the RenderTarget canvas check from the Framer component
 Call git add -A or stage files outside the scope of the current task
