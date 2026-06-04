@@ -19,7 +19,7 @@ export async function transcribeAudioSync(audioBuffer: Buffer): Promise<unknown>
       Authorization: `Token ${apiKey}`,
       'Content-Type': 'audio/mpeg',
     },
-    body: audioBuffer,
+    body: audioBuffer as unknown as BodyInit,
   });
 
   if (!res.ok) {

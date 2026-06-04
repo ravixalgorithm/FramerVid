@@ -5,10 +5,9 @@ import { useRouter } from 'next/navigation';
 import type { Video } from '@framevid/types';
 import { Logo } from '../components/brand/Logo';
 import { ProfileMenu } from '../components/dashboard/ProfileMenu';
-import { VideoGridCard } from '../components/dashboard/VideoGridCard';
 import { NotificationPanel } from '../components/notifications/NotificationPanel';
 import { useNotifications } from '../components/notifications/NotificationProvider';
-import { getPlanLimits, formatMaxFileSize, formatMaxDuration } from './lib/plan-limits';
+import { getPlanLimits, formatMaxFileSize } from './lib/plan-limits';
 import { resolveMediaUrl } from './lib/asset-url';
 
 interface ClientProps {
@@ -25,14 +24,7 @@ interface ClientProps {
   };
 }
 
-type StatusTone = 'success' | 'warning' | 'danger';
 
-const statusMeta: Record<Video['status'], { label: string; tone: StatusTone; progress: number }> = {
-  ready: { label: 'Success', tone: 'success', progress: 100 },
-  processing: { label: 'Encoding', tone: 'warning', progress: 62 },
-  uploading: { label: 'Uploading', tone: 'warning', progress: 28 },
-  error: { label: 'Error', tone: 'danger', progress: 0 },
-};
 
 function formatDuration(seconds?: number) {
   if (!seconds) return '0:00';

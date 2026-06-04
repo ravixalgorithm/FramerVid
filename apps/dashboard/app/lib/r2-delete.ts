@@ -22,7 +22,7 @@ export async function deleteVideoAssets(workspaceId: string, videoId: string) {
       let continuationToken: string | undefined = undefined;
 
       while (isTruncated) {
-        const listed = await r2.send(
+        const listed: any = await r2.send(
           new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
             Prefix: prefix,
@@ -35,7 +35,7 @@ export async function deleteVideoAssets(workspaceId: string, videoId: string) {
             new DeleteObjectsCommand({
               Bucket: BUCKET_NAME,
               Delete: {
-                Objects: listed.Contents.map((o) => ({ Key: o.Key })),
+                Objects: listed.Contents.map((o: any) => ({ Key: o.Key })),
               },
             })
           );
