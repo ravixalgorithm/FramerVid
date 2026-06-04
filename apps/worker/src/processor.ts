@@ -11,6 +11,8 @@ import {
   uploadTranscodeOutputs,
   localUploadPath,
   isR2Configured,
+  uploadFileToR2,
+  deleteFromR2,
 } from './r2.js';
 import { extractAndUploadAudio } from './deepgram.js';
 import { startHealthServer } from './health-server.js';
@@ -157,56 +159,139 @@ function laddersForSource(sourceHeight: number | null): HlsLadder[] {
   return HLS_LADDERS.filter((l) => l.height <= sourceHeight);
 }
 
-async function encodeHlsLadder(tempDir: string, rawFilePath: string, ladder: HlsLadder): Promise<void> {
-  const playlistPath = path.join(tempDir, `${ladder.label}.m3u8`);
-  await runFFmpeg([
-    '-y',
-    '-i',
-    rawFilePath,
-    '-vf',
-    `scale=-2:${ladder.height}`,
-    '-c:v',
-    'libx264',
-    '-crf',
-    '23',
-    '-preset',
-    ffmpegPreset(),
-    '-hls_time',
-    '6',
-    '-hls_playlist_type',
-    'vod',
-    '-hls_segment_filename',
-    path.join(tempDir, `${ladder.label}_%03d.ts`),
-    '-f',
-    'hls',
-    playlistPath,
-  ]);
-}
-
-function buildMasterPlaylist(ladders: HlsLadder[]): string {
-  const lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
-  for (const ladder of ladders) {
-    lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${ladder.bandwidth},RESOLUTION=${ladder.display}`);
-    lines.push(`${ladder.label}.m3u8`);
+async function encodeAllLaddersConcurrently(
+  tempDir: string,
+  rawFilePath: string,
+  ladders: HlsLadder[],
+  audioExtracted: boolean,
+  workspaceId: string,
+  videoId: string
+): Promise<Set<string>> {
+  const filterParts: string[] = [];
+  
+  if (ladders.length > 1) {
+    const splitStr = `[0:v]split=${ladders.length}` + ladders.map((_, i) => `[v${i}]`).join('');
+    filterParts.push(splitStr);
+  } else {
+    filterParts.push(`[0:v]copy[v0]`);
   }
-  return `${lines.join('\n')}\n`;
-}
 
-async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
-  if (tasks.length === 0) return [];
-  const results: T[] = new Array(tasks.length);
-  let nextIndex = 0;
+  ladders.forEach((ladder, i) => {
+    filterParts.push(`[v${i}]scale=-2:${ladder.height}[v${i}out]`);
+  });
 
-  async function worker(): Promise<void> {
-    while (true) {
-      const i = nextIndex++;
-      if (i >= tasks.length) return;
-      results[i] = await tasks[i]();
+  const filterComplex = filterParts.join(';');
+
+  const args = [
+    '-y',
+    '-i', rawFilePath,
+    '-filter_complex', filterComplex,
+  ];
+
+  const varStreamMap: string[] = [];
+
+  // Audio: map as a separate audio-only group so it is not duplicated across variants
+  if (audioExtracted) {
+    args.push('-map', '0:a?', '-c:a:0', 'aac', '-b:a:0', '128k');
+    varStreamMap.push('a:0,agroup:audio,default:yes');
+  }
+
+  ladders.forEach((ladder, i) => {
+    args.push(
+      '-map', `[v${i}out]`,
+      `-c:v:${i}`, 'libx264',
+      `-b:v:${i}`, ladder.bandwidth.toString(),
+      '-maxrate', Math.floor(ladder.bandwidth * 1.2).toString(),
+      '-bufsize', Math.floor(ladder.bandwidth * 2).toString(),
+      '-crf', '23',
+      '-preset', ffmpegPreset(),
+      '-g', '48',
+      '-sc_threshold', '0'
+    );
+
+    const mapStr = audioExtracted
+      ? `v:${i},agroup:audio,name:${ladder.label}`
+      : `v:${i},name:${ladder.label}`;
+    varStreamMap.push(mapStr);
+  });
+
+  args.push(
+    '-f', 'hls',
+    '-hls_time', '6',
+    '-hls_playlist_type', 'vod',
+    '-master_pl_name', 'master.m3u8',
+    '-var_stream_map', varStreamMap.join(' '),
+    '-hls_segment_filename', path.join(tempDir, `%v_%03d.ts`),
+    path.join(tempDir, `%v.m3u8`)
+  );
+
+  const uploadQueue: string[] = [];
+  const uploadedSet = new Set<string>();
+  let isFfmpegDone = false;
+  let ffmpegError: Error | null = null;
+
+  console.log(`[Worker] Starting concurrent FFmpeg pass for ${videoId}`);
+  const ffmpegPromise = runFFmpeg(args).then(() => {
+    isFfmpegDone = true;
+  }).catch(err => {
+    isFfmpegDone = true;
+    ffmpegError = err;
+  });
+
+  const pollInterval = setInterval(async () => {
+    try {
+      const files = await fs.readdir(tempDir);
+      for (const file of files) {
+        if (file.endsWith('.ts') && !file.endsWith('.tmp') && !uploadedSet.has(file)) {
+          uploadedSet.add(file);
+          uploadQueue.push(file);
+        }
+      }
+      processUploadQueue();
+    } catch (e) {
+      // ignore
+    }
+  }, 500);
+
+  let activeUploads = 0;
+  const MAX_CONCURRENT = 10;
+
+  async function processUploadQueue() {
+    while (uploadQueue.length > 0 && activeUploads < MAX_CONCURRENT) {
+      const file = uploadQueue.shift()!;
+      activeUploads++;
+      
+      const filePath = path.join(tempDir, file);
+      const r2Key = `${workspaceId}/${videoId}/transcoded/${file}`;
+      
+      uploadFileToR2(filePath, r2Key).then(() => {
+        activeUploads--;
+        processUploadQueue();
+      }).catch(err => {
+        console.error(`[Worker] Failed JIT upload for ${file}`, err);
+        activeUploads--;
+        uploadedSet.delete(file); // allow retry
+        processUploadQueue();
+      });
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
-  return results;
+  await ffmpegPromise;
+  
+  clearInterval(pollInterval);
+  
+  await new Promise<void>((resolve) => {
+    const waitInterval = setInterval(() => {
+      if (uploadQueue.length === 0 && activeUploads === 0) {
+        clearInterval(waitInterval);
+        resolve();
+      }
+    }, 200);
+  });
+
+  if (ffmpegError) throw ffmpegError;
+  
+  return uploadedSet;
 }
 
 async function generateThumbnail(tempDir: string, rawFilePath: string): Promise<string> {
@@ -299,29 +384,25 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
       }
     }
 
+    let audioUrl: string | null = null;
+    try {
+      audioUrl = await extractAndUploadAudio(rawFilePath, tempDir, workspaceId, videoId);
+    } catch (audioErr) {
+      console.warn(`[Worker] Audio extract failed for ${videoId}:`, audioErr);
+    }
+
+    // 2. Video Processing: Parallel HLS ladders with JIT uploading
     const sourceHeight = await probeSourceHeight(rawFilePath);
     const ladders = laddersForSource(sourceHeight);
-    const concurrency = transcodeConcurrency();
+    console.log(`[Worker] Selected ladders for ${videoId}:`, ladders.map((l) => l.label));
 
-    console.log(
-      `[Worker] FFmpeg transcode for ${originalFilename}: ladders=${ladders.map((l) => l.label).join(', ')} preset=${ffmpegPreset()} concurrency=${concurrency}`
-    );
+    const uploadedSet = await encodeAllLaddersConcurrently(tempDir, rawFilePath, ladders, Boolean(audioUrl), workspaceId, videoId);
 
-    const transcodeStarted = Date.now();
-    await runWithConcurrency(
-      [
-        ...ladders.map((ladder) => () => encodeHlsLadder(tempDir, rawFilePath, ladder)),
-        () => generateThumbnail(tempDir, rawFilePath),
-      ],
-      concurrency
-    );
-    console.log(
-      `[Worker] Encode + thumbnail finished in ${((Date.now() - transcodeStarted) / 1000).toFixed(1)}s`
-    );
-
-    await fs.writeFile(path.join(tempDir, 'master.m3u8'), buildMasterPlaylist(ladders));
-
-    const { masterUrl, thumbUrl } = await uploadTranscodeOutputs(tempDir, workspaceId, videoId);
+    // 3. Final Sweep: Generate thumbnail and upload manifests
+    await generateThumbnail(tempDir, rawFilePath);
+    
+    // r2.ts handles leftover files (.m3u8 manifests, .jpg thumbnail)
+    const { masterUrl, thumbUrl } = await uploadTranscodeOutputs(tempDir, workspaceId, videoId, uploadedSet);
     const durationSeconds = (await probeDurationSeconds(rawFilePath)) ?? undefined;
     const resolution = await probeResolution(rawFilePath);
 
@@ -336,12 +417,7 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
       }
     }
 
-    let audioUrl: string | null = null;
-    try {
-      audioUrl = await extractAndUploadAudio(rawFilePath, tempDir, workspaceId, videoId);
-    } catch (audioErr) {
-      console.warn(`[Worker] Audio extract failed for ${videoId}:`, audioErr);
-    }
+
 
     await db
       .update(videos)
@@ -361,6 +437,19 @@ async function processTranscodeJob(job: { data: TranscodeJobData }) {
     // We no longer trigger AI transcription here; it is now strictly on-demand via the dashboard.
 
     console.log(`[Worker] Production transcode complete for Video ID: ${videoId}`);
+
+    // 4. Cleanup: Delete the raw source file from R2 to save storage
+    try {
+      await deleteFromR2(rawKey);
+      console.log(`[Worker] Deleted raw file from R2: ${rawKey}`);
+    } catch (cleanupErr) {
+      console.warn(`[Worker] Could not delete raw file ${rawKey}:`, cleanupErr);
+    }
+    // Also delete raw from local disk storage
+    try {
+      const localRaw = localUploadPath(rawKey);
+      await fs.unlink(localRaw);
+    } catch { /* may not exist */ }
   } catch (error: unknown) {
     console.error(`[Worker] Transcoding failed for Video ID: ${videoId}:`, error);
 

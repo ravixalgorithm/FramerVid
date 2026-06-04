@@ -1,3 +1,53 @@
+export interface VttCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function vttTimestampToSeconds(value: string): number {
+  const t = value.trim().replace(',', '.');
+  const segments = t.split(':');
+  if (segments.length === 3) {
+    const [h, m, s] = segments;
+    return Number(h) * 3600 + Number(m) * 60 + Number(s);
+  }
+  if (segments.length === 2) {
+    const [m, s] = segments;
+    return Number(m) * 60 + Number(s);
+  }
+  return Number(t);
+}
+
+/** Parse WebVTT into timed cues for custom preview overlays (HLS.js + MSE ignores native tracks). */
+export function parseVttCues(vtt: string): VttCue[] {
+  const normalized = vtt.replace(/^\uFEFF/, '').trim().replace(/\r\n/g, '\n');
+  const blocks = normalized.split(/\n\n+/);
+  const cues: VttCue[] = [];
+
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed || trimmed.startsWith('WEBVTT') || trimmed.startsWith('NOTE')) continue;
+
+    const lines = block.split('\n');
+    const timeIdx = lines.findIndex((line) => line.includes('-->'));
+    if (timeIdx === -1) continue;
+
+    const [startPart, endPart] = lines[timeIdx].split('-->').map((s) => s.trim());
+    const start = vttTimestampToSeconds(startPart);
+    const end = vttTimestampToSeconds(endPart);
+    const text = lines
+      .slice(timeIdx + 1)
+      .join('\n')
+      .trim()
+      .replace(/^NOTE\s+/i, '');
+
+    if (!text || text.toLowerCase().startsWith('no speech detected')) continue;
+    cues.push({ start, end, text });
+  }
+
+  return cues;
+}
+
 /** Normalize uploaded caption files to WebVTT. */
 export function normalizeCaptionsFile(raw: string, filename: string): string {
   const text = raw.replace(/^\uFEFF/, '').trim();

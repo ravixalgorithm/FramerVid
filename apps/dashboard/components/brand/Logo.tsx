@@ -4,13 +4,13 @@ type LogoProps = {
   className?: string;
 };
 
-export function Logo({ size = 'md', variant = 'default', className = '' }: LogoProps) {
-  const textSize = size === 'sm' ? 'text-sm' : 'text-[15px]';
+export function Logo({ size = 'xl', variant = 'default', className = '' }: LogoProps) {
+  const textSize = size === 'xl' ? 'text-xl' : 'text-[15px]';
   const inverse = variant === 'inverse';
 
   return (
     <span
-      className={`font-semibold tracking-[-0.02em] ${textSize} ${
+      className={`font-black ${textSize} ${
         inverse ? 'text-white' : 'text-[hsl(var(--foreground))]'
       } ${className}`}
     >

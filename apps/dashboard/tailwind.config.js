@@ -20,7 +20,7 @@ module.exports = {
         },
       },
       fontFamily: {
-        sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
+        sans: ['"Koerber Repro Screen"', '"ABC Repro"', 'var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         frame: '10px',

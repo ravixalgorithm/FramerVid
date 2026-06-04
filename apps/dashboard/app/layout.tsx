@@ -1,11 +1,11 @@
 import './globals.css';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Manrope } from 'next/font/google';
 import { Providers } from '../components/Providers';
 
-const font = Inter({
+const font = Manrope({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  weight: ['300', '400', '500', '600', '700'],
   variable: '--font-sans',
 });
 
@@ -22,7 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${font.variable} font-sans bg-background text-foreground antialiased selection:bg-[hsl(var(--accent))] selection:text-white`}
+        className={`${font.variable} font-sans font-light bg-background text-foreground antialiased selection:bg-[hsl(var(--accent))] selection:text-white`}
       >
         <Providers>{children}</Providers>
       </body>

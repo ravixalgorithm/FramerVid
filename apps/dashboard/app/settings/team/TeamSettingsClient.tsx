@@ -109,20 +109,20 @@ export default function TeamSettingsClient({ workspaceId }: { workspaceId: strin
     <div className="flex flex-col gap-8">
       {/* Pending Invites */}
       {invites.length > 0 && (
-        <div className="bg-[#1C1C1F] border border-white/10 rounded-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-            <h3 className="font-medium text-white">Pending Invites ({invites.length})</h3>
+        <div className="border-t border-[hsl(var(--hairline))] pt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-[13px] uppercase tracking-wider text-[hsl(var(--muted))]">Pending Invites ({invites.length})</h3>
           </div>
-          <div className="divide-y divide-white/10">
+          <div className="space-y-2">
             {invites.map(invite => (
-              <div key={invite.id} className="px-6 py-4 flex items-center justify-between">
+              <div key={invite.id} className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium text-white">{invite.email}</div>
-                  <div className="text-xs text-gray-400 capitalize mt-0.5">{invite.role} · Expires in 7 days</div>
+                  <div className="text-[14px] font-medium text-[hsl(var(--foreground))]">{invite.email}</div>
+                  <div className="text-xs text-[hsl(var(--muted))] capitalize mt-0.5">{invite.role} · Expires in 7 days</div>
                 </div>
                 <button
                   onClick={() => handleRevoke(invite.id)}
-                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                  className="text-xs font-bold text-red-500 hover:text-red-700 transition-colors"
                 >
                   Revoke
                 </button>
@@ -133,28 +133,28 @@ export default function TeamSettingsClient({ workspaceId }: { workspaceId: strin
       )}
 
       {/* Team Members */}
-      <div className="bg-[#1C1C1F] border border-white/10 rounded-xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-          <h3 className="font-medium text-white">Workspace Members ({members.length})</h3>
-          <button onClick={() => setShowInviteModal(true)} className="btn-accent h-8 px-3 text-xs">
+      <div className="border-t border-[hsl(var(--hairline))] pt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-[13px] uppercase tracking-wider text-[hsl(var(--muted))]">Workspace Members ({members.length})</h3>
+          <button onClick={() => setShowInviteModal(true)} className="bg-black text-white hover:bg-black/90 rounded-[10px] h-9 px-4 text-[13px] font-bold transition-colors">
             Invite Member
           </button>
         </div>
-        <div className="divide-y divide-white/10">
+        <div className="space-y-4">
           {members.map(member => (
-            <div key={member.userId} className="px-6 py-4 flex items-center justify-between">
+            <div key={member.userId} className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center font-semibold text-sm">
+                <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center font-bold text-[14px]">
                   {member.name ? member.name[0].toUpperCase() : member.email[0].toUpperCase()}
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-white">
+                  <div className="text-[14px] font-medium text-[hsl(var(--foreground))]">
                     {member.name || 'Unnamed User'}
                   </div>
-                  <div className="text-xs text-gray-400">{member.email}</div>
+                  <div className="text-xs text-[hsl(var(--muted))]">{member.email}</div>
                 </div>
               </div>
-              <div className="text-xs bg-white/5 text-gray-300 px-2 py-1 rounded capitalize">
+              <div className="text-xs font-bold bg-[#f3f4f6] text-[hsl(var(--muted))] px-2.5 py-1 rounded-[6px] capitalize">
                 {member.role}
               </div>
             </div>
@@ -164,45 +164,47 @@ export default function TeamSettingsClient({ workspaceId }: { workspaceId: strin
 
       {/* Invite Modal */}
       {showInviteModal && (
-        <div className="modal-overlay fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-[#1C1C1F] border border-white/10 p-6 rounded-xl w-full max-w-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-white">Invite Member</h3>
-              <button onClick={() => setShowInviteModal(false)} className="text-gray-400 hover:text-white">
-                ✕
+        <div className="modal-overlay fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-[24px] w-full max-w-sm shadow-xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-[hsl(var(--foreground))]">Invite Member</h3>
+              <button onClick={() => setShowInviteModal(false)} className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
-            <form onSubmit={handleInvite} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-gray-300">Email Address</label>
+            <form onSubmit={handleInvite} className="flex flex-col gap-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-[13px] font-bold text-[hsl(var(--muted))] uppercase tracking-wider block">Email Address</label>
                 <input
                   type="email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
-                  className="input-minimal h-10"
+                  className="w-full rounded-[12px] border-transparent bg-[#f6f8fa] px-4 py-3 text-[14px] font-medium text-[hsl(var(--foreground))] outline-none transition-colors focus:ring-2 focus:ring-[hsl(var(--accent)/0.2)]"
                   placeholder="colleague@company.com"
                   required
                 />
               </div>
               
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-gray-300">Role</label>
+              <div className="flex flex-col gap-2">
+                <label className="text-[13px] font-bold text-[hsl(var(--muted))] uppercase tracking-wider block">Role</label>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
-                  className="input-minimal h-10"
+                  className="w-full rounded-[12px] border-transparent bg-[#f6f8fa] px-4 py-3 text-[14px] font-medium text-[hsl(var(--foreground))] outline-none transition-colors focus:ring-2 focus:ring-[hsl(var(--accent)/0.2)] appearance-none"
                 >
                   <option value="admin">Admin</option>
                   <option value="editor">Editor</option>
                   <option value="viewer">Viewer</option>
                 </select>
-                <p className="text-[10px] text-gray-500 mt-1">
+                <p className="text-[11px] text-[hsl(var(--muted))] mt-1 font-medium leading-relaxed">
                   Admins can manage billing and invites. Editors can upload and edit videos. Viewers have read-only access.
                 </p>
               </div>
 
-              <div className="flex justify-end mt-4">
-                <button type="submit" className="btn-accent h-10 px-4 w-full" disabled={inviting}>
+              <div className="pt-2">
+                <button type="submit" className="bg-black text-white hover:bg-black/90 rounded-[12px] h-12 w-full text-[14px] font-bold disabled:opacity-50 transition-colors" disabled={inviting}>
                   {inviting ? 'Sending...' : 'Send Invite'}
                 </button>
               </div>

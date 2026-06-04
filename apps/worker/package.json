@@ -6,8 +6,8 @@
   "main": "./dist/processor.js",
   "scripts": {
     "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/processor.js','// Railway/runtime uses tsx src/processor.ts\\n')\"",
-    "start": "tsx src/processor.ts",
-    "dev": "tsx watch src/processor.ts"
+    "start": "tsx --env-file=.env src/processor.ts",
+    "dev": "tsx watch --env-file=.env src/processor.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.554.0",

@@ -50,8 +50,8 @@ export default async function TeamSettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-xl font-semibold text-white">Team & Members</h2>
-        <p className="text-sm text-gray-400 mt-1">
+        <h2 className="text-xl font-bold tracking-tight text-[hsl(var(--foreground))]">Team & Members</h2>
+        <p className="text-[13px] text-[hsl(var(--muted))] mt-1">
           Manage workspace members and pending invitations for {activeWorkspace.name}.
         </p>
       </div>

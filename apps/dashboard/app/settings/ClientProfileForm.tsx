@@ -36,38 +36,45 @@ export default function ClientProfileForm({ initialName, email }: ProfileFormPro
   };
 
   return (
-    <form onSubmit={handleUpdateProfileSubmit} className="space-y-4 max-w-md">
-      <div className="space-y-1.5">
-        <label className="section-label block">Display Name</label>
-        <input
-          type="text"
-          required
-          placeholder="Your Name"
-          value={profileEditName}
-          onChange={(e) => setProfileEditName(e.target.value)}
-          className="detail-field"
-        />
+    <div className="max-w-2xl">
+      <div className="mb-6">
+        <h2 className="text-xl font-bold tracking-tight text-[hsl(var(--foreground))]">Profile Settings</h2>
+        <p className="text-[13px] text-[hsl(var(--muted))] mt-1">Manage your personal profile details</p>
       </div>
 
-      <div className="space-y-1.5">
-        <label className="section-label block">Email Address</label>
-        <input
-          type="email"
-          disabled
-          value={email}
-          className="detail-field !cursor-not-allowed !bg-[hsl(var(--sidebar))] !text-[hsl(var(--muted))]"
-        />
-      </div>
+      <form onSubmit={handleUpdateProfileSubmit} className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-[13px] font-bold text-[hsl(var(--muted))] uppercase tracking-wider block">Display Name</label>
+          <input
+            type="text"
+            required
+            placeholder="Your Name"
+            value={profileEditName}
+            onChange={(e) => setProfileEditName(e.target.value)}
+            className="w-full rounded-[12px] border-transparent bg-white px-4 py-3 text-[14px] font-medium text-[hsl(var(--foreground))] outline-none transition-colors focus:ring-2 focus:ring-[hsl(var(--accent)/0.2)]"
+          />
+        </div>
 
-      <div className="flex gap-2 pt-2">
-        <button
-          type="submit"
-          disabled={loading || !profileEditName.trim() || profileEditName.trim() === initialName}
-          className="btn-accent rounded-lg h-8 px-4 text-xs font-bold disabled:opacity-50"
-        >
-          {loading ? 'Saving...' : 'Save Changes'}
-        </button>
-      </div>
-    </form>
+        <div className="space-y-2">
+          <label className="text-[13px] font-bold text-[hsl(var(--muted))] uppercase tracking-wider block">Email Address</label>
+          <input
+            type="email"
+            disabled
+            value={email}
+            className="w-full rounded-[12px] border-transparent bg-white/50 px-4 py-3 text-[14px] font-medium !cursor-not-allowed text-[hsl(var(--muted))]"
+          />
+        </div>
+
+        <div className="pt-4">
+          <button
+            type="submit"
+            disabled={loading || !profileEditName.trim() || profileEditName.trim() === initialName}
+            className="bg-black text-white hover:bg-black/90 rounded-[12px] h-10 px-6 text-[14px] font-bold disabled:opacity-50 transition-colors"
+          >
+            {loading ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

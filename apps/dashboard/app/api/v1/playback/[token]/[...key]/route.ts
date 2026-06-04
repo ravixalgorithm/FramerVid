@@ -10,7 +10,7 @@ const CDN_BASE =
   'https://cdn.framevid.co';
 
 function useLocalMediaProxy(): boolean {
-  return process.env.NODE_ENV === 'development';
+  return !process.env.CLOUDFLARE_R2_ACCOUNT_ID;
 }
 
 function contentTypeForKey(key: string): string {

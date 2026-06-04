@@ -69,17 +69,6 @@ export function ProfileMenu({ userInitial, userName, userEmail }: ProfileMenuPro
           <button
             type="button"
             role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              router.push('/settings');
-            }}
-            className="menu-popover-item"
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            role="menuitem"
             onClick={handleSignOut}
             disabled={signingOut}
             className="menu-popover-item menu-popover-item-danger disabled:opacity-60"

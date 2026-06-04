@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import type { FrictionInsight, RetentionSeries, VideoAnalyticsData } from '@framevid/types';
 
 const VideoRetentionChart = dynamic(() => import('./VideoRetentionChart'), {
@@ -46,7 +47,15 @@ function BreakdownBars({
   );
 }
 
-export default function VideoAnalytics({ videoId }: { videoId: string }) {
+export default function VideoAnalytics({
+  videoId,
+  duration = 0,
+  onHover
+}: {
+  videoId: string;
+  duration?: number;
+  onHover?: (time: number) => void;
+}) {
   const [data, setData] = useState<VideoAnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzingFriction, setAnalyzingFriction] = useState(false);
@@ -86,12 +95,23 @@ export default function VideoAnalytics({ videoId }: { videoId: string }) {
 
   const chartData = useMemo(() => {
     const retention: RetentionSeries | undefined = data?.retention;
-    if (!retention?.buckets?.length) return [];
+    if (!retention?.buckets?.length) {
+      if (duration > 0) {
+        // Generate points at HLS-like segment boundaries (~2s intervals)
+        const segmentDuration = 2;
+        const numSegments = Math.max(1, Math.floor(duration / segmentDuration));
+        return Array.from({ length: numSegments + 1 }).map((_, i) => ({
+          time: Math.min(i * segmentDuration, Math.floor(duration)),
+          retention: 0,
+        }));
+      }
+      return [];
+    }
     return retention.buckets.map((bucket, i) => ({
       time: bucket,
       retention: retention.retentionPct[i] ?? 0,
     }));
-  }, [data?.retention]);
+  }, [data?.retention, duration]);
 
   const friction: FrictionInsight | null | undefined = data?.friction;
 
@@ -162,9 +182,8 @@ export default function VideoAnalytics({ videoId }: { videoId: string }) {
         {stats.map((stat) => (
           <div
             key={stat.label}
-            className={`detail-surface flex items-center justify-between p-4 ${
-              stat.highlight ? 'ring-2 ring-[hsl(var(--accent)/0.15)] border-[hsl(var(--accent-border))]' : ''
-            }`}
+            className={`detail-surface flex items-center justify-between p-4 ${stat.highlight ? 'ring-2 ring-[hsl(var(--accent)/0.15)] border-[hsl(var(--accent-border))]' : ''
+              }`}
           >
             <div className="space-y-0.5">
               <span className="section-label block">{stat.label}</span>
@@ -187,7 +206,7 @@ export default function VideoAnalytics({ videoId }: { videoId: string }) {
           ) : null}
         </div>
         {chartData.length > 0 ? (
-          <VideoRetentionChart data={chartData} friction={friction} />
+          <VideoRetentionChart data={chartData} friction={friction} onHover={onHover} />
         ) : (
           <p className="py-8 text-center text-[11px] font-medium text-[hsl(var(--muted))]">
             Play this video on a published page to collect heartbeat retention data.
@@ -208,7 +227,7 @@ export default function VideoAnalytics({ videoId }: { videoId: string }) {
                 </button>
               )}
             </div>
-            
+
             {friction.analysis ? (
               <>
                 <p className="mt-2 text-sm leading-relaxed text-amber-950/90">{friction.analysis}</p>
@@ -241,46 +260,18 @@ export default function VideoAnalytics({ videoId }: { videoId: string }) {
         </div>
       ) : null}
 
-      <div className="detail-surface overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] bg-[hsl(var(--sidebar)/0.4)] px-4 py-3">
-          <h3 className="section-label">Recent captured leads</h3>
-          <span className="rounded-full bg-[hsl(var(--sidebar))] px-2 py-0.5 text-[10px] font-semibold text-[hsl(var(--muted))]">
-            {data.recentLeads.length} lead{data.recentLeads.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-        {data.recentLeads.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="list-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Location</th>
-                  <th>Captured</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.recentLeads.map((lead, i) => (
-                  <tr key={i} className="list-row">
-                    <td className="font-semibold text-[hsl(var(--foreground))]">{lead.email}</td>
-                    <td className="text-[hsl(var(--muted))]">{lead.country}</td>
-                    <td className="text-[hsl(var(--muted))]">{new Date(lead.timestamp).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="space-y-3 px-6 py-12 text-center">
-            <div className="empty-studio-icon mx-auto">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-            </div>
-            <p className="mx-auto max-w-[280px] text-[11px] font-medium leading-relaxed text-[hsl(var(--muted))]">
-              No leads captured yet. Enable lead capture in the customizer to start collecting emails.
-            </p>
-          </div>
-        )}
+
+
+      <div className="pt-2">
+        <Link
+          href={`/videos/${videoId}/analytics`}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-white px-4 py-3 text-sm font-semibold text-[hsl(var(--foreground))] shadow-sm transition-all hover:bg-gray-50 hover:text-gray-900"
+        >
+          View Advanced Analytics
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        </Link>
       </div>
     </div>
   );

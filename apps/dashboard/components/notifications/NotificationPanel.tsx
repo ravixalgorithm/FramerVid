@@ -95,13 +95,10 @@ export function NotificationPanel() {
 
       {open ? (
         <div className="notification-panel" role="dialog" aria-label="Notifications">
-          <div className="notification-panel-header">
-            <div>
-              <p className="notification-panel-kicker">Activity</p>
-              <h2 className="notification-panel-title">Notifications</h2>
-            </div>
+          <div className="flex items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-3">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[hsl(var(--foreground))]">Notifications</h2>
             {notifications.length > 0 ? (
-              <button type="button" className="notification-panel-clear" onClick={clearAll}>
+              <button type="button" className="text-[10px] font-semibold text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] transition-colors" onClick={clearAll}>
                 Clear all
               </button>
             ) : null}

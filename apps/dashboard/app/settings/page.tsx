@@ -10,10 +10,7 @@ export default async function ProfileSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight text-[hsl(var(--foreground))]">Profile Settings</h2>
-        <p className="text-xs text-[hsl(var(--muted))]">Manage your personal profile details</p>
-      </div>
+
 
       <ClientProfileForm initialName={user.name || ''} email={user.email} />
     </div>

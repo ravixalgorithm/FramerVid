@@ -46,10 +46,7 @@ export default async function WorkspaceSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight text-[hsl(var(--foreground))]">Workspace Settings</h2>
-        <p className="text-xs text-[hsl(var(--muted))]">Manage settings for {activeWorkspace.name}</p>
-      </div>
+
 
       <ClientWorkspaceForm
         workspaceId={activeWorkspace.id}

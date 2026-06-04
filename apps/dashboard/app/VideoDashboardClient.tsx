@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Video } from '@framevid/types';
-import Link from 'next/link';
 import { Logo } from '../components/brand/Logo';
 import { ProfileMenu } from '../components/dashboard/ProfileMenu';
 import { WorkspaceSwitcher } from '../components/dashboard/WorkspaceSwitcher';
@@ -98,6 +97,7 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
   const [videos, setVideos] = useState<any[]>(initialVideos);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [activeFilter, setActiveFilter] = useState<'home' | 'favorites' | 'trash'>('home');
   
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const { success: toastSuccess, error: toastError } = useNotifications();
@@ -400,6 +400,30 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
     }
   };
 
+  const handleImport = async () => {
+    if (!importUrl) return;
+    setImporting(true);
+    try {
+      const res = await fetch('/api/videos/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl, workspaceId, folderId: activeFolderId }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to import video');
+      
+      setVideos((prev) => [payload.data, ...prev]);
+      setImportUrl('');
+      setShowImportModal(false);
+      showToast('Video import started');
+    } catch (err: any) {
+      toastError('Import failed', { message: err.message });
+      console.error(err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const deleteVideo = async (videoId: string) => {
     if (!confirm('Are you sure you want to delete this video?')) return;
     try {
@@ -544,677 +568,208 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
   };
 
   return (
-    <div className="dash-shell selection:bg-[hsl(var(--accent))] selection:text-white">
-      {isWindowDragging && (
-        <div className="drop-overlay">
-          <div className="drop-overlay-inner">
-            <svg className="mb-4 h-14 w-14 text-[hsl(var(--accent))]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <h2 className="page-title text-2xl">Drop files anywhere</h2>
-            <p className="page-subtitle mt-2 text-base">Release to upload to FrameVid</p>
+    <div className="flex h-screen w-full bg-[hsl(var(--background))] font-sans overflow-hidden">
+      {/* MAIN LAYOUT */}
+      <div className="flex-1 flex flex-col min-w-0">
+        
+        {/* TOPBAR */}
+        <header className="h-[72px] flex items-center justify-between px-8 bg-transparent gap-8">
+          <div className="flex items-center shrink-0">
+            <Logo />
+          </div>
+          <div className="flex-1 max-w-xl relative">
+             <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+             </svg>
+             <input 
+               type="text" 
+               placeholder="Search all of FrameVid" 
+               value={searchQuery}
+               onChange={(e) => setSearchQuery(e.target.value)}
+               className="w-full bg-[#f1f1f2] border-transparent rounded-full py-2 pl-11 pr-4 text-[14px] text-[hsl(var(--foreground))] placeholder:text-[#5e5e62] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--accent))] focus:bg-white transition-all font-medium" 
+             />
+          </div>
+          
+          <div className="flex items-center gap-4 ml-6 shrink-0">
+             <button onClick={() => router.push('/settings')} className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[#f3f4f6] p-2 rounded-full transition-colors" aria-label="Settings">
+               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+               </svg>
+             </button>
+             <NotificationPanel />
+             <button onClick={() => fileInputRef.current?.click()} className="bg-[hsl(var(--foreground))] text-white text-[13px] font-bold px-4 py-2 rounded-full flex items-center gap-1.5 hover:opacity-90 transition shadow-sm whitespace-nowrap">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Create
+             </button>
+             <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
+          </div>
+        </header>
+
+        {/* SCROLLABLE CONTENT */}
+        <main className="flex-1 overflow-y-auto px-10 py-8">
+           
+           {/* ACTION CARDS ROW */}
+           <div className="flex gap-4 mb-10 overflow-x-auto pb-4 pt-1 snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button onClick={() => fileInputRef.current?.click()} className="snap-start shrink-0 w-52 bg-[hsl(var(--surface))] rounded-2xl p-4 flex items-center gap-4 hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] transition-shadow">
+                 <div className="w-10 h-10 bg-[hsl(var(--background))] rounded-full flex items-center justify-center text-[hsl(var(--foreground))] shrink-0">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+                 </div>
+                 <div className="text-left min-w-0">
+                    <div className="font-bold text-[14px] text-[hsl(var(--foreground))] truncate tracking-tight">Upload</div>
+                    <div className="text-[12px] text-[hsl(var(--muted))] truncate">from computer</div>
+                 </div>
+              </button>
+              <button onClick={() => setShowImportModal(true)} className="snap-start shrink-0 w-52 bg-[hsl(var(--surface))] rounded-2xl p-4 flex items-center gap-4 hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] transition-shadow">
+                 <div className="w-10 h-10 bg-[hsl(var(--background))] rounded-full flex items-center justify-center text-[hsl(var(--foreground))] shrink-0">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 13.5l3 3m0 0l3-3m-3 3v-6m1.06-4.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                 </div>
+                 <div className="text-left min-w-0">
+                    <div className="font-bold text-[14px] text-[hsl(var(--foreground))] truncate tracking-tight">Import</div>
+                    <div className="text-[12px] text-[hsl(var(--muted))] truncate">from Drive and more</div>
+                 </div>
+              </button>
+           </div>
+           
+           <div className="flex items-center justify-between mb-4">
+             <h2 className="text-xl font-bold text-[hsl(var(--foreground))] tracking-tight">Recents</h2>
+             <div className="flex items-center gap-2">
+               <button className="w-8 h-8 rounded-full bg-[hsl(var(--surface))] flex items-center justify-center text-[hsl(var(--foreground))] hover:bg-gray-100 shadow-[0_2px_8px_rgba(0,0,0,0.05)] transition border-0">
+                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+               </button>
+               <button className="w-8 h-8 rounded-full bg-[hsl(var(--surface))] flex items-center justify-center text-[hsl(var(--foreground))] hover:bg-gray-100 shadow-[0_2px_8px_rgba(0,0,0,0.05)] transition border-0">
+                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+               </button>
+             </div>
+           </div>
+           
+           {uploading && (
+              <div className="mb-8 w-[340px] shrink-0 snap-start bg-[hsl(var(--surface))] border border-dashed border-[hsl(var(--accent-border))] rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                 <div>
+                    <span className="inline-block bg-[hsl(var(--accent))] text-white text-[10px] font-bold px-2 py-0.5 rounded-full mb-3">Uploading</span>
+                    <h3 className="font-bold text-sm text-[hsl(var(--foreground))] truncate mb-1">New video</h3>
+                    <p className="text-[11px] text-[hsl(var(--muted))]">{uploadStage || uploadSpeed || 'Connecting…'}</p>
+                 </div>
+                 <div className="mt-4">
+                    <div className="flex justify-between text-[10px] font-bold text-[hsl(var(--foreground))] mb-1.5">
+                       <span>Progress</span>
+                       <span>{uploadProgress}%</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-[hsl(var(--sidebar))] rounded-full overflow-hidden">
+                       <div className="h-full bg-[hsl(var(--accent))]" style={{ width: `${uploadProgress}%` }}></div>
+                    </div>
+                 </div>
+              </div>
+           )}
+
+           <div className="flex gap-2 overflow-x-auto pb-6 pt-1 snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+             {filteredVideos.length === 0 && !uploading ? (
+               <div className="text-sm text-[hsl(var(--muted))] py-10 w-full text-center">No recent videos. Upload one to get started!</div>
+             ) : (
+               filteredVideos.map(video => (
+                 <div key={video.id} className="w-[364px] shrink-0 snap-start group relative p-3 rounded-[24px] hover:bg-[#eaf0f4] transition-colors cursor-pointer" onClick={() => openVideo(video)}>
+                   <div className="relative aspect-video bg-black rounded-xl overflow-hidden mb-3 shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+                      {thumbnailFor(video) ? (
+                        <img src={thumbnailFor(video)} className="w-full h-full object-cover" alt={video.title} />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[hsl(var(--muted))] bg-gray-900">
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
+                        </div>
+                      )}
+                      <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-sm text-white text-[11px] font-bold px-1.5 py-0.5 rounded tracking-wide">
+                        {formatDuration(video.durationSeconds)}
+                      </div>
+                      {video.status !== 'ready' && (
+                        <div className="absolute top-2 left-2 bg-[hsl(var(--accent))] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                          Processing
+                        </div>
+                      )}
+                   </div>
+                   <div className="flex items-start justify-between px-1">
+                      <div className="flex gap-3 min-w-0">
+                         <div className="w-[26px] h-[26px] rounded-full bg-[#f87171] text-white flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                           {userInitial}
+                         </div>
+                         <div className="min-w-0">
+                           <h3 className="font-bold text-[14px] text-[hsl(var(--foreground))] truncate tracking-tight">{video.title}</h3>
+                           <p className="text-[12px] text-[hsl(var(--foreground))] truncate leading-tight mt-0.5">{user.name || 'User'}</p>
+                           <p className="text-[11px] text-[hsl(var(--muted))] truncate mt-0.5">{getRelativeTimeString(video.createdAt)}</p>
+                         </div>
+                      </div>
+                      <div className="relative">
+                        <button 
+                          className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] p-1" 
+                          onClick={(e) => { e.stopPropagation(); setActiveMenuVideoId(activeMenuVideoId === video.id ? null : video.id); }}
+                        >
+                           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+                           </svg>
+                        </button>
+                        {activeMenuVideoId === video.id && (
+                           <div className="absolute right-0 bottom-8 z-50 w-36 bg-[hsl(var(--surface))] rounded-xl shadow-lg p-1.5 overflow-hidden border border-gray-100">
+                              <button className="w-full text-left px-2.5 py-2 text-[12px] font-semibold text-[hsl(var(--foreground))] hover:bg-[#f0f5f6] rounded-lg transition" onClick={() => { copyComponentId(video); setActiveMenuVideoId(null); }}>Copy ID</button>
+                              <button className="w-full text-left px-2.5 py-2 text-[12px] font-semibold text-[hsl(var(--foreground))] hover:bg-[#f0f5f6] rounded-lg transition" onClick={() => { downloadVideo(video); setActiveMenuVideoId(null); }}>Download</button>
+                              <button className="w-full text-left px-2.5 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-50 rounded-lg transition" onClick={() => { deleteVideo(video.id); setActiveMenuVideoId(null); }}>Delete</button>
+                           </div>
+                        )}
+                      </div>
+                   </div>
+                 </div>
+               ))
+             )}
+           </div>
+
+
+        </main>
+      </div>
+
+      <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if(f) handleFile(f); }} />
+
+      {/* IMPORT MODAL */}
+      {showImportModal && (
+        <div className="modal-overlay">
+          <div className="modal-panel-md bg-[hsl(var(--surface))]">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="page-title text-lg">Import Video URL</h3>
+              <button onClick={() => setShowImportModal(false)} className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <p className="page-subtitle mb-4 text-[13px] text-[hsl(var(--muted))] leading-relaxed">Provide any video URL (YouTube, Vimeo, Google Drive, Mux, or a direct link) and we'll process it in the background.</p>
+            <div className="flex gap-2">
+              <input type="url" required placeholder="https://youtube.com/watch?v=..." value={importUrl} onChange={(e) => setImportUrl(e.target.value)} className="input-minimal" onKeyDown={(e) => { if (e.key === 'Enter') handleImport(); }} />
+              <button type="button" onClick={handleImport} disabled={!importUrl || importing} className="btn-accent shrink-0">
+                {importing ? 'Importing…' : 'Import'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      <header className="dash-topbar">
-        <div className="flex items-center gap-4">
-          <button type="button" onClick={() => router.push('/')} className="cursor-pointer transition-opacity hover:opacity-85">
-            <Logo />
-          </button>
-
-          <WorkspaceSwitcher activeWorkspace={activeWorkspace} />
-        </div>
-
-        <div className="dash-search-wrap">
-          <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-            <svg className="h-4 w-4 text-[hsl(var(--muted))]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <circle cx="11" cy="11" r="8" />
-              <path d="m21 21-4.3-4.3" />
-            </svg>
-          </div>
-          <input
-            type="text"
-            placeholder="Search videos and folders..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="dash-search"
-          />
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Feedback"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.184-4.183a1.14 1.14 0 0 1 .778-.332 48.294 48.294 0 0 0 5.83-.498c1.585-.233 2.708-1.626 2.708-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-            </svg>
-          </button>
-          <NotificationPanel />
-          <button
-            type="button"
-            onClick={() => setShowFolderModal(true)}
-            className="icon-button"
-            aria-label="Folders"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
-            </svg>
-          </button>
-          <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
-        </div>
-      </header>
-
-      {/* MAIN CONTAINER */}
-      <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl space-y-6">
-          
-          {/* HEADER SECTION: WORKSPACE AND ACTIONS */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-2">
-              <h1 className="page-title text-2xl sm:text-[28px]">{activeWorkspace.name}</h1>
-              <div className="flex flex-wrap gap-2">
-                <span className="stat-chip">
-                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-                  {planLimits.maxVideos === null
-                    ? `${videos.length} videos`
-                    : `${videos.length} / ${planLimits.maxVideos} videos`}
-                </span>
-                <span className="stat-chip">
-                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                  {formatMaxFileSize(planLimits.maxBytesPerVideo)} / video
-                </span>
-                <span className="stat-chip">
-                  <svg className="h-3.5 w-3.5 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                  {formatMaxDuration(planLimits.maxDurationSeconds)} / video
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="segment">
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={`segment-btn h-8 w-8 ${viewMode === 'list' ? 'segment-btn-active' : ''}`}
-                  aria-label="List View"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={`segment-btn h-8 w-8 ${viewMode === 'grid' ? 'segment-btn-active' : ''}`}
-                  aria-label="Grid View"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <rect x="3.75" y="3.75" width="7.5" height="7.5" rx="1" />
-                    <rect x="12.75" y="3.75" width="7.5" height="7.5" rx="1" />
-                    <rect x="3.75" y="12.75" width="7.5" height="7.5" rx="1" />
-                    <rect x="12.75" y="12.75" width="7.5" height="7.5" rx="1" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Create Folder button */}
-              <button type="button" onClick={() => setShowFolderModal(true)} className="btn-secondary !h-9">
-                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
-                Create Folder
-              </button>
-
-              <button type="button" onClick={openBulkMoveModal} className="btn-secondary !h-9">
-                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0-4.5 4.5M21 7.5H7.5" />
-                </svg>
-                Bulk Move
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowRecordModal(true);
-                  setIsRecording(false);
-                  setRecordingSeconds(0);
-                }}
-                className="btn-secondary !h-9"
-              >
-                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M12 18.75H4.5a2.25 2.25 0 0 1-2.25-2.25V9a2.25 2.25 0 0 1 2.25-2.25H12A2.25 2.25 0 0 1 14.25 9v7.5A2.25 2.25 0 0 1 12 18.75Z" />
-                </svg>
-                Record
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowImportModal(true)}
-                className="btn-secondary !h-9"
-              >
-                <svg className="h-4 w-4 text-[hsl(var(--muted))]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
-                </svg>
-                Import URL
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="btn-orange !h-9 flex items-center gap-2 rounded-lg px-3.5 text-xs font-bold shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={uploading || atVideoLimit}
-                title={atVideoLimit ? 'Video limit reached for your plan' : undefined}
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                <span>Upload Video</span>
-                <span className="mx-0.5 h-4 w-[1px] bg-white/30" />
-                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                </svg>
+      {/* RECORD MODAL */}
+      {showRecordModal && (
+        <div className="modal-overlay">
+          <div className="modal-panel-md bg-[hsl(var(--surface))]">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="page-title text-lg">Record Screen & Camera</h3>
+              <button onClick={() => setShowRecordModal(false)} className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
             
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) handleFile(file);
-              }}
-            />
-          </div>
-
-          {/* FREE PLAN UPGRADE BANNER */}
-          {activeWorkspace.plan === 'free' && (
-            <div className="plan-upgrade-banner">
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-              <div className="relative z-[1] flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                <div>
-                  <h3 className="text-lg font-bold tracking-tight">You&apos;re on the free plan</h3>
-                  <p className="mt-1 text-xs font-medium text-white/75">Upgrade to upload more videos and higher limits</p>
-                </div>
-                <Link
-                  href="/settings/billing"
-                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-white px-4 text-xs font-bold text-gray-950 shadow-[0_2px_12px_rgba(0,0,0,0.2)] hover:bg-white/95"
-                >
-                  View plans
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                  </svg>
-                </Link>
-              </div>
-            </div>
-          )}
-
-          {folders.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="section-label">Folders ({folders.length})</h2>
-                {activeFolderId && (
-                  <button type="button" onClick={() => setActiveFolderId(null)} className="chip-clear">
-                    Clear filter
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-                {folders.map((f) => (
-                  <button
-                    type="button"
-                    key={f.id}
-                    onClick={() => setActiveFolderId(activeFolderId === f.id ? null : f.id)}
-                    className={`folder-tile ${activeFolderId === f.id ? 'folder-tile-active' : ''}`}
-                  >
-                    <svg className="h-8 w-8 text-[hsl(var(--accent))]" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                    </svg>
-                    <div className="mt-2 min-w-0">
-                      <p className="truncate text-xs font-semibold text-[hsl(var(--foreground))]">{f.name}</p>
-                      <p className="card-meta mt-0.5">{f.videoCount} videos</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* VIDEOS SECTION TITLE */}
-          <div className="space-y-4">
-            <h2 className="section-label">Videos ({filteredVideos.length})</h2>
-
-            {uploading && viewMode === 'grid' && (
-              <div className="asset-grid">
-                <article className="product-card-uploading">
-                  <div>
-                    <span className="product-card-badge">Uploading</span>
-                    <h3 className="product-card-title mt-4">New video</h3>
-                    <p className="product-card-subtitle">{uploadStage || uploadSpeed || 'Connecting…'}</p>
-                    <p className="product-card-desc">{timeRemaining || 'Estimating time remaining…'}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs font-semibold text-[hsl(var(--muted))]">
-                      <span>Progress</span>
-                      <span>{uploadProgress}%</span>
-                    </div>
-                    <div className="progress-track h-2">
-                      <div className="progress-fill" style={{ width: `${uploadProgress}%` }} />
-                    </div>
-                  </div>
-                </article>
-              </div>
-            )}
-
-            {filteredVideos.length === 0 && !uploading ? (
-              <div className="empty-studio !mx-0 min-h-[260px]">
-                <div className="empty-studio-icon">
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M12 18.75H4.5a2.25 2.25 0 0 1-2.25-2.25V9a2.25 2.25 0 0 1 2.25-2.25H12A2.25 2.25 0 0 1 14.25 9v7.5A2.25 2.25 0 0 1 12 18.75Z" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-semibold text-[hsl(var(--foreground))]">No videos found</h3>
-                <p className="page-subtitle mt-1 max-w-xs">
-                  {searchQuery ? 'Try different search terms.' : 'Upload or record your first video to get started.'}
-                </p>
-              </div>
-            ) : viewMode === 'grid' ? (
-              <div className="asset-grid">
-                {filteredVideos.map((video) => {
-                  const meta = statusMeta[video.status as Video['status']] || { label: 'Unknown', tone: 'danger', progress: 0 };
-                  const thumbnail = thumbnailFor(video);
-
-                  return (
-                    <VideoGridCard
-                      key={video.id}
-                      video={video}
-                      meta={meta}
-                      thumbnail={thumbnail}
-                      onOpen={() => openVideo(video)}
-                      onMenuToggle={(e) => {
-                        e.stopPropagation();
-                        setActiveMenuVideoId(activeMenuVideoId === video.id ? null : video.id);
-                      }}
-                      menuOpen={activeMenuVideoId === video.id}
-                      onCopyId={() => copyComponentId(video)}
-                      onDownload={() => downloadVideo(video)}
-                      onDelete={() => deleteVideo(video.id)}
-                      showMove={folders.length > 0}
-                      onMove={() => {
-                        setActiveMenuVideoId(null);
-                        setSingleMoveVideoId(video.id);
-                        setBulkMoveFolder('');
-                      }}
-                      formatDuration={formatDuration}
-                      getRelativeTimeString={getRelativeTimeString}
-                      getResolutionString={getResolutionString}
-                    />
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="list-table-wrap">
-                <table className="list-table">
-                  <thead>
-                    <tr>
-                      <th className="px-4 py-3">Video Title & File</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Duration</th>
-                      <th className="px-4 py-3">Created</th>
-                      <th className="px-4 py-3">Size</th>
-                      <th className="px-4 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredVideos.map((video) => {
-                      const meta = statusMeta[video.status as Video['status']] || { label: 'Unknown', tone: 'danger', progress: 0 };
-                      const thumbnail = thumbnailFor(video);
-                      return (
-                        <tr key={video.id} onClick={() => openVideo(video)} className="list-row group">
-                          <td className="min-w-0">
-                            <div className="flex items-center gap-3">
-                              <div className="list-thumb">
-                                {thumbnail ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={thumbnail} alt="" className="h-full w-full object-cover" />
-                                ) : (
-                                  <div className="video-thumb-fallback flex h-full w-full items-center justify-center">
-                                    <svg className="h-4 w-4 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="min-w-0">
-                                <span className="block truncate font-semibold text-[hsl(var(--foreground))] group-hover:text-[hsl(var(--accent))]">
-                                  {video.title}
-                                </span>
-                                <span className="card-meta mt-0.5 block truncate !text-[10px]">
-                                  {video.originalFilename}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
-                          <td>
-                            <StatusBadge status={video.status} label={meta.label} />
-                          </td>
-                          <td className="font-medium text-[hsl(var(--muted))]">
-                            {formatDuration(video.durationSeconds)}
-                          </td>
-                          <td className="font-medium text-[hsl(var(--muted))]">
-                            {getRelativeTimeString(video.createdAt)}
-                          </td>
-                          <td className="font-medium text-[hsl(var(--muted))]">
-                            {formatSize(video.sizeBytes)}
-                          </td>
-                          <td className="text-right" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => copyComponentId(video)}
-                                className="icon-btn"
-                                title="Copy Component ID"
-                              >
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => downloadVideo(video)}
-                                className="icon-btn"
-                                title="Download Video"
-                              >
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                </svg>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => deleteVideo(video.id)}
-                                className="icon-btn icon-btn-danger"
-                                title="Delete Video"
-                              >
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.34 9m-4.78 0L9 9m12 1.5a2 2 0 0 0-2-2h-3.75a2 2 0 0 0-2 2H10.5m4.5-4.5V3a1.5 1.5 0 0 0-1.5-1.5h-3A1.5 1.5 0 0 0 9 3v1.5m10.5 0h-12" />
-                                </svg>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-
-      {/* CREATE FOLDER MODAL */}
-      {showFolderModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel-sm">
-            <h3 className="page-title text-base">Create Folder</h3>
-            <p className="page-subtitle">Group videos by client, campaign, or project.</p>
-            <form onSubmit={handleCreateFolderSubmit} className="mt-4 space-y-4">
-              <input
-                type="text"
-                required
-                placeholder="Folder name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                className="input-minimal"
-              />
-              <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => setShowFolderModal(false)} className="btn-secondary !h-8">
-                  Cancel
-                </button>
-                <button type="submit" className="btn-accent !h-8">
-                  Create Folder
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* BULK MOVE MODAL */}
-      {showBulkMoveModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel-md flex max-h-[85vh] flex-col">
-            <h3 className="page-title text-base">Bulk Move Videos</h3>
-            <p className="page-subtitle">Select videos and a destination folder.</p>
-            <div className="mt-4 space-y-4 overflow-y-auto flex-1 min-h-0">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="section-label !text-[10px]">Videos</label>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setBulkSelectedIds(
-                        bulkSelectedIds.length === videos.length
-                          ? []
-                          : videos.map((v) => v.id),
-                      )
-                    }
-                    className="text-[11px] font-bold text-[hsl(var(--accent))] hover:underline"
-                  >
-                    {bulkSelectedIds.length === videos.length ? 'Deselect all' : 'Select all'}
-                  </button>
-                </div>
-                <div className="max-h-40 overflow-y-auto rounded-lg border border-[hsl(var(--hairline))] divide-y divide-[hsl(var(--hairline))]">
-                  {videos.length === 0 ? (
-                    <p className="p-3 text-center text-xs text-[hsl(var(--muted))]">No videos in this workspace.</p>
-                  ) : (
-                    videos.map((v) => (
-                      <label
-                        key={v.id}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-2 text-xs font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--sidebar))]"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={bulkSelectedIds.includes(v.id)}
-                          onChange={(e) => {
-                            setBulkSelectedIds((prev) =>
-                              e.target.checked ? [...prev, v.id] : prev.filter((id) => id !== v.id),
-                            );
-                          }}
-                          className="rounded border-[hsl(var(--hairline))] text-[hsl(var(--accent))] focus:ring-[hsl(var(--accent))]"
-                        />
-                        <span className="truncate">{v.title}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="section-label !text-[10px]">Target Folder</label>
-                {folders.length === 0 ? (
-                  <div className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--sidebar))] p-3 text-center text-xs font-medium text-[hsl(var(--muted))]">
-                    No folders yet. Create a folder first.
-                  </div>
-                ) : (
-                  <select
-                    value={bulkMoveFolder}
-                    onChange={(e) => setBulkMoveFolder(e.target.value)}
-                    className="input-minimal"
-                  >
-                    <option value="">Select destination...</option>
-                    {folders.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowBulkMoveModal(false)} className="btn-secondary !h-8">
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveVideosToFolder(bulkSelectedIds, bulkMoveFolder)}
-                  className="btn-accent !h-8"
-                  disabled={
-                    folders.length === 0 ||
-                    !bulkMoveFolder ||
-                    bulkSelectedIds.length === 0 ||
-                    movingVideos
-                  }
-                >
-                  {movingVideos ? 'Moving…' : `Move ${bulkSelectedIds.length || ''} video${bulkSelectedIds.length === 1 ? '' : 's'}`}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SINGLE VIDEO MOVE MODAL */}
-      {singleMoveVideoId && (
-        <div className="modal-overlay">
-          <div className="modal-panel-sm">
-            <h3 className="page-title text-base">Move to folder</h3>
-            <p className="page-subtitle truncate">
-              {videos.find((v) => v.id === singleMoveVideoId)?.title}
-            </p>
-            <div className="mt-4 space-y-4">
-              <select
-                value={bulkMoveFolder}
-                onChange={(e) => setBulkMoveFolder(e.target.value)}
-                className="input-minimal"
-              >
-                <option value="">Select folder...</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSingleMoveVideoId(null);
-                    setBulkMoveFolder('');
-                  }}
-                  className="btn-secondary !h-8"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveVideosToFolder([singleMoveVideoId], bulkMoveFolder)}
-                  className="btn-accent !h-8"
-                  disabled={!bulkMoveFolder || movingVideos}
-                >
-                  {movingVideos ? 'Moving…' : 'Move'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* IMPORT URL MODAL */}
-      {showImportModal && (
-        <div className="modal-overlay">
-          <div className="modal-panel-sm">
-            <div className="flex items-center justify-between">
-              <h3 className="page-title text-base">Import via URL</h3>
-              <button
-                type="button"
-                onClick={() => setShowImportModal(false)}
-                className="text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
-                disabled={importing}
-              >
-                <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-            <form onSubmit={handleImportUrl} className="mt-4 space-y-4">
-              <div>
-                <label htmlFor="import-url" className="section-label !text-[10px] mb-1.5 block">
-                  Video URL (YouTube, Vimeo, Loom, TikTok, etc.)
-                </label>
-                <input
-                  id="import-url"
-                  type="url"
-                  required
-                  value={importUrl}
-                  onChange={(e) => setImportUrl(e.target.value)}
-                  placeholder="https://youtube.com/watch?v=..."
-                  className="input-minimal w-full"
-                  disabled={importing}
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowImportModal(false)}
-                  className="btn-secondary !h-8"
-                  disabled={importing}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn-accent !h-8"
-                  disabled={importing || !importUrl.trim()}
-                >
-                  {importing ? 'Importing...' : 'Start Import'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* WEBCAM / SCREEN RECORDER PLAYFUL MODAL */}
-      {showRecordModal && (
-        <div className="modal-overlay !bg-[hsl(240_6%_10%/0.72)]">
-          <div className="modal-panel-md max-w-lg !border-zinc-800 !bg-zinc-950 !p-6 text-white !shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)]">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="flex items-center gap-2 text-base font-semibold">
-                <span className="inline-flex h-2 w-2 rounded-full bg-red-500" />
-                Record Studio
-              </h3>
-              <button
-                onClick={() => {
-                  setIsRecording(false);
-                  setShowRecordModal(false);
-                }}
-                className="text-gray-400 hover:text-white"
-                aria-label="Close Recorder"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            {/* Visual Camera Canvas Mockup */}
-            <div className="relative mt-4 aspect-video rounded-lg overflow-hidden bg-black flex flex-col items-center justify-center border border-gray-800">
+            <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-gray-900 shadow-inner flex items-center justify-center border border-gray-800">
               {isRecording ? (
                 <>
-                  {/* Grid lines */}
-                  <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
-                  
-                  {/* Camera view - pulsing recording ring */}
-                  <div className="relative z-10 flex flex-col items-center gap-3">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-red-500 bg-red-500/10 p-3 text-red-500">
-                      <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                      </svg>
-                    </div>
-                    <span className="text-sm font-bold tracking-widest text-red-500">RECORDING</span>
+                  <div className="absolute inset-0 border-2 border-red-500/80 rounded-xl pointer-events-none animate-pulse"></div>
+                  <div className="flex flex-col items-center justify-center text-white">
+                    <div className="h-4 w-4 rounded-full bg-red-600 animate-pulse mb-3 shadow-[0_0_12px_rgba(220,38,38,0.8)]"></div>
                     <span className="text-2xl font-mono font-extrabold tracking-wider">
                       {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60) < 10 ? '0' : ''}{recordingSeconds % 60}
                     </span>
                   </div>
-
-                  {/* Corner indicator */}
-                  <div className="absolute top-3 left-3 rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                  <div className="absolute top-3 left-3 rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
                     Live
                   </div>
                 </>
@@ -1229,35 +784,23 @@ export default function VideoDashboardClient({ initialVideos, workspaceId, user,
               )}
             </div>
 
-            {/* Recorder Controls */}
             <div className="mt-6 flex items-center justify-between">
               <div className="flex gap-2">
                 <button className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-800 bg-gray-800/50 hover:bg-gray-800 hover:text-white text-gray-400 transition shadow-sm">
-                  {/* mic icon */}
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg>
                 </button>
                 <button className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-800 bg-gray-800/50 hover:bg-gray-800 hover:text-white text-gray-400 transition shadow-sm">
-                  {/* monitor/screen icon */}
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" /></svg>
                 </button>
               </div>
-
               <div className="flex items-center gap-2.5">
                 {isRecording ? (
-                  <button
-                    onClick={stopRecordingAction}
-                    className="flex h-9 items-center gap-1.5 rounded-lg bg-white px-4 text-xs font-bold text-gray-900 transition hover:bg-gray-100 shadow"
-                  >
-                    <span className="h-2 w-2 rounded-sm bg-gray-900" />
-                    Stop Recording
+                  <button onClick={stopRecordingAction} className="flex h-9 items-center gap-1.5 rounded-lg bg-white px-4 text-xs font-bold text-gray-900 transition hover:bg-gray-100 shadow">
+                    <span className="h-2 w-2 rounded-sm bg-gray-900" /> Stop Recording
                   </button>
                 ) : (
-                  <button
-                    onClick={startRecordingAction}
-                    className="flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-4 text-xs font-bold text-white transition hover:bg-red-500 shadow-lg shadow-red-600/20"
-                  >
-                    <span className="h-2.5 w-2.5 rounded-full bg-white" />
-                    Start Recording
+                  <button onClick={startRecordingAction} className="flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-4 text-xs font-bold text-white transition hover:bg-red-500 shadow-lg shadow-red-600/20">
+                    <span className="h-2.5 w-2.5 rounded-full bg-white" /> Start Recording
                   </button>
                 )}
               </div>

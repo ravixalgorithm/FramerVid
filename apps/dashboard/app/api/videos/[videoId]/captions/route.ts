@@ -4,20 +4,13 @@ import path from 'path';
 import { db, videos } from '@framevid/db';
 import { eq } from 'drizzle-orm';
 import { getCurrentUser } from '../../../../lib/auth';
-import { captionsStorageKey } from '../../../../lib/asset-url';
+import { captionsStorageKey, storedMediaUrl } from '../../../../lib/asset-url';
 import { normalizeCaptionsFile } from '../../../../lib/captions';
 import { localUploadPath } from '../../../../../lib/storage';
-
-const CDN_BASE =
-  process.env.CLOUDFLARE_R2_PUBLIC_URL ||
-  process.env.NEXT_PUBLIC_R2_PUBLIC_URL ||
-  'https://cdn.framevid.co';
+import { uploadToR2, deleteFromR2 } from '../../../../../lib/r2';
+import { invalidateVideoCache } from '../../../../../lib/cache';
 
 const MAX_CAPTION_BYTES = 512 * 1024;
-
-function publicUrlForKey(key: string, _origin: string): string {
-  return `${CDN_BASE.replace(/\/$/, '')}/${key}`;
-}
 
 function isCaptionFile(name: string): boolean {
   const lower = name.toLowerCase();
@@ -74,17 +67,28 @@ export async function POST(
     }
 
     const key = captionsStorageKey(video.workspaceId, videoId);
-    const dest = localUploadPath(key);
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, vttText, 'utf8');
 
-    const captionsUrl = publicUrlForKey(key, req.nextUrl.origin);
+    // Delete old caption before writing new one (saves storage cost)
+    try { await deleteFromR2(key); } catch { /* may not exist */ }
+    try { await fs.unlink(localUploadPath(key)); } catch { /* may not exist */ }
+
+    // Upload to R2 if configured, otherwise write to local disk
+    const uploadedToR2 = await uploadToR2(key, vttText, 'text/vtt');
+
+    if (!uploadedToR2) {
+      const dest = localUploadPath(key);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, vttText, 'utf8');
+    }
+
+    const captionsUrl = storedMediaUrl(key, req.nextUrl.origin);
     const [updated] = await db
       .update(videos)
       .set({ captionsUrl, updatedAt: new Date() })
       .where(eq(videos.id, videoId))
       .returning();
 
+    await invalidateVideoCache(videoId);
     return NextResponse.json({ data: { captionsUrl, video: updated } });
   } catch (error: unknown) {
     console.error('Captions upload failed:', error);
@@ -110,11 +114,10 @@ export async function DELETE(
     }
 
     const key = captionsStorageKey(video.workspaceId, videoId);
-    try {
-      await fs.unlink(localUploadPath(key));
-    } catch {
-      /* file may not exist */
-    }
+    // Delete from R2
+    try { await deleteFromR2(key); } catch { /* may not exist */ }
+    // Delete from local disk
+    try { await fs.unlink(localUploadPath(key)); } catch { /* may not exist */ }
 
     const [updated] = await db
       .update(videos)
@@ -122,6 +125,7 @@ export async function DELETE(
       .where(eq(videos.id, videoId))
       .returning();
 
+    await invalidateVideoCache(videoId);
     return NextResponse.json({ data: { video: updated } });
   } catch (error: unknown) {
     console.error('Captions delete failed:', error);

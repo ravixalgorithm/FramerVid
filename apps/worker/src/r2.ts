@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import fs from 'fs/promises';
 import path from 'path';
@@ -17,6 +18,7 @@ export const r2 = new S3Client({
     accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || 'mock',
     secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || 'mock',
   },
+  forcePathStyle: true,
 });
 
 export const BUCKET_NAME = process.env.CLOUDFLARE_R2_BUCKET_NAME || 'framevid-assets';
@@ -30,6 +32,21 @@ export { resolveLocalUploadDir };
 
 export function localUploadPath(rawKey: string): string {
   return sharedLocalUploadPath(rawKey);
+}
+
+/** Delete a single object from R2. Silently succeeds if the key doesn't exist. */
+export async function deleteFromR2(key: string): Promise<void> {
+  if (!isR2Configured()) return;
+  try {
+    await r2.send(
+      new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+      })
+    );
+  } catch (err) {
+    console.warn(`[R2] Failed to delete ${key}:`, err);
+  }
 }
 
 export async function downloadRawFromR2(rawKey: string, destPath: string): Promise<void> {
@@ -114,30 +131,56 @@ async function walkFiles(dir: string): Promise<string[]> {
   return result;
 }
 
-/** Upload transcode outputs from a flat temp directory. */
 export async function uploadTranscodeOutputs(
   tempDir: string,
   workspaceId: string,
-  videoId: string
+  videoId: string,
+  ignoreFiles?: Set<string>
 ): Promise<{ masterUrl: string; thumbUrl: string }> {
   const files = await walkFiles(tempDir);
   let masterUrl = '';
   let thumbUrl = '';
 
-  for (const filePath of files) {
+  const MAX_CONCURRENT = 10;
+  
+  // Create tasks array
+  const uploadTasks = files.map(filePath => async () => {
     const name = path.basename(filePath);
+    if (ignoreFiles && ignoreFiles.has(name)) return null;
+
     if (name.endsWith('.jpg') || name.endsWith('.jpeg')) {
-      thumbUrl = await uploadFileToR2(
+      const url = await uploadFileToR2(
         filePath,
         `${workspaceId}/${videoId}/thumbnails/${name}`
       );
+      return { type: 'thumb', url };
     } else if (name.endsWith('.m3u8') || name.endsWith('.ts')) {
       const url = await uploadFileToR2(
         filePath,
         `${workspaceId}/${videoId}/transcoded/${name}`
       );
-      if (name === 'master.m3u8') masterUrl = url;
+      return { type: 'hls', name, url };
     }
+    return null;
+  });
+
+  // Execute tasks with concurrency limit
+  const results: ({ type: string; url: string; name?: string } | null)[] = [];
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < uploadTasks.length) {
+      const task = uploadTasks[nextIndex++];
+      results.push(await task());
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(MAX_CONCURRENT, uploadTasks.length) }, worker);
+  await Promise.all(workers);
+
+  for (const res of results) {
+    if (!res) continue;
+    if (res.type === 'thumb') thumbUrl = res.url;
+    if (res.type === 'hls' && res.name === 'master.m3u8') masterUrl = res.url;
   }
 
   if (!masterUrl) {

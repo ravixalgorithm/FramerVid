@@ -4,6 +4,8 @@ import { db, videos } from '@framevid/db';
 import { eq } from 'drizzle-orm';
 import { getCurrentUser, hashPassword } from '../../../lib/auth';
 import { assertWorkspaceAccess } from '../../../lib/workspace-access';
+import { deleteVideoAssets } from '../../../lib/r2-delete';
+import { invalidateVideoCache } from '../../../../lib/cache';
 import type { VideoSettings } from '@framevid/types';
 
 const patchSchema = z.object({
@@ -77,6 +79,9 @@ export async function PATCH(
       .where(eq(videos.id, videoId))
       .returning();
 
+    // Invalidate cache so next read gets fresh data
+    await invalidateVideoCache(videoId);
+
     return NextResponse.json({
       data: updatedVideo,
     });
@@ -114,8 +119,14 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
     }
 
-    // 2. Delete the record
+    // 2. Delete assets from Cloudflare R2 / Local Storage
+    await deleteVideoAssets(video.workspaceId, videoId);
+
+    // 3. Delete the record
     await db.delete(videos).where(eq(videos.id, videoId));
+
+    // 4. Invalidate cache
+    await invalidateVideoCache(videoId);
 
     return NextResponse.json({
       data: {

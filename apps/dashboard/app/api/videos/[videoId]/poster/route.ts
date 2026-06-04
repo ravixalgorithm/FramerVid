@@ -6,6 +6,8 @@ import { eq } from 'drizzle-orm';
 import { getCurrentUser } from '../../../../lib/auth';
 import { localUploadPath } from '../../../../../lib/storage';
 import { posterStorageKey } from '../../../../lib/asset-url';
+import { uploadToR2, deleteFromR2 } from '../../../../../lib/r2';
+import { invalidateVideoCache } from '../../../../../lib/cache';
 
 const CDN_BASE =
   process.env.CLOUDFLARE_R2_PUBLIC_URL ||
@@ -48,9 +50,19 @@ export async function POST(
     }
 
     const key = posterStorageKey(video.workspaceId, videoId);
-    const dest = localUploadPath(key);
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, buffer);
+
+    // Delete old poster before writing new one (saves storage cost)
+    try { await deleteFromR2(key); } catch { /* may not exist */ }
+    try { await fs.unlink(localUploadPath(key)); } catch { /* may not exist */ }
+
+    // Upload to R2 if configured, otherwise write to local disk
+    const uploadedToR2 = await uploadToR2(key, buffer, 'image/jpeg');
+
+    if (!uploadedToR2) {
+      const dest = localUploadPath(key);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, buffer);
+    }
 
     const posterUrl = publicUrlForKey(key, req.nextUrl.origin);
     const [updated] = await db
@@ -59,6 +71,7 @@ export async function POST(
       .where(eq(videos.id, videoId))
       .returning();
 
+    await invalidateVideoCache(videoId);
     return NextResponse.json({ data: { posterUrl, video: updated } });
   } catch (error: unknown) {
     console.error('Poster upload failed:', error);

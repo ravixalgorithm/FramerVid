@@ -8,6 +8,8 @@ import { getCurrentUser } from '../../../../../lib/auth';
 import { localUploadPath } from '../../../../../../lib/storage';
 import { posterStorageKey } from '../../../../../lib/asset-url';
 import { resolveRemoteHlsForFfmpeg } from '../../../../../lib/poster-frame-sources';
+import { uploadToR2, deleteFromR2 } from '../../../../../../lib/r2';
+import { invalidateVideoCache } from '../../../../../../lib/cache';
 
 const CDN_BASE =
   process.env.CLOUDFLARE_R2_PUBLIC_URL ||
@@ -111,15 +113,27 @@ async function resolveLocalSourcePath(
 
 async function savePosterBuffer(buffer: Buffer, workspaceId: string, videoId: string, origin: string) {
   const posterKey = posterStorageKey(workspaceId, videoId);
-  const dest = localUploadPath(posterKey);
-  await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.writeFile(dest, buffer);
+
+  // Delete old poster before writing new one (saves storage cost)
+  try { await deleteFromR2(posterKey); } catch { /* may not exist */ }
+  try { await fs.unlink(localUploadPath(posterKey)); } catch { /* may not exist */ }
+
+  // Upload to R2 if configured, otherwise write to local disk
+  const uploadedToR2 = await uploadToR2(posterKey, buffer, 'image/jpeg');
+
+  if (!uploadedToR2) {
+    const dest = localUploadPath(posterKey);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, buffer);
+  }
+
   const posterUrl = publicUrlForKey(posterKey, origin);
   const [updated] = await db
     .update(videos)
     .set({ posterUrl, updatedAt: new Date() })
     .where(eq(videos.id, videoId))
     .returning();
+  await invalidateVideoCache(videoId);
   return { posterUrl, video: updated };
 }
 

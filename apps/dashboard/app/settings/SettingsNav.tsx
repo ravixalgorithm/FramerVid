@@ -18,11 +18,6 @@ export default function SettingsNav() {
       isActive: pathname === '/settings/workspace',
     },
     {
-      name: 'Plans & Billing',
-      href: '/settings/billing',
-      isActive: pathname === '/settings/billing',
-    },
-    {
       name: 'Team & Members',
       href: '/settings/team',
       isActive: pathname === '/settings/team',
@@ -30,13 +25,15 @@ export default function SettingsNav() {
   ];
 
   return (
-    <nav className="flex flex-row gap-1 overflow-x-auto pb-4 md:flex-col md:pb-0">
+    <nav className="px-3 space-y-1 mt-2">
       {links.map((link) => (
         <Link
           key={link.href}
           href={link.href}
-          className={`detail-tab flex-1 whitespace-nowrap md:flex-initial ${
-            link.isActive ? 'detail-tab-active' : 'detail-tab-idle'
+          className={`w-full font-bold text-[14px] rounded-[10px] px-3 py-2.5 flex items-center gap-3 transition-colors ${
+            link.isActive 
+              ? 'text-[hsl(var(--foreground))] bg-[#f3f4f6]' 
+              : 'text-[hsl(var(--muted))] hover:bg-[#f3f4f6] hover:text-[hsl(var(--foreground))]'
           }`}
         >
           {link.name}

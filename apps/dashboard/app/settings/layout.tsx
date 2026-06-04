@@ -18,38 +18,43 @@ export default async function SettingsLayout({ children }: LayoutProps) {
   const userInitial = (user.name || user.email)[0].toUpperCase();
 
   return (
-    <div className="dash-shell font-sans">
-      {/* TOP HEADER */}
-      <header className="dash-topbar !h-[52px]">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="cursor-pointer hover:opacity-85">
-            <Logo />
-          </Link>
-          <span className="h-4 w-[1px] bg-[hsl(var(--hairline))]" />
-          <Link
-            href="/"
-            className="flex items-center gap-1 text-xs font-semibold text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
-            </svg>
-            <span>Back to Dashboard</span>
-          </Link>
+    <div className="flex h-screen w-full bg-[hsl(var(--background))] font-sans overflow-hidden">
+      {/* SIDEBAR */}
+      <aside className="w-64 flex-shrink-0 bg-transparent flex flex-col justify-between overflow-y-auto">
+        <div>
+          <div className="h-16 flex items-center px-6 mt-2 mb-2">
+            <Link href="/" className="cursor-pointer hover:opacity-85 transition-opacity">
+              <Logo />
+            </Link>
+          </div>
+          <SettingsNav />
         </div>
 
-        <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
-      </header>
+        <div className="px-3 pb-6">
+          <Link
+            href="/"
+            className="w-full font-bold text-[14px] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[#f3f4f6] rounded-[10px] px-3 py-2.5 flex items-center gap-3 transition-colors"
+          >
+            <svg className="w-[20px] h-[20px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+            </svg>
+            Back to Dashboard
+          </Link>
+        </div>
+      </aside>
 
-      {/* SETTINGS CONTAINER */}
-      <div className="flex flex-1 flex-col md:flex-row max-w-7xl w-full mx-auto px-4 py-8 sm:px-6 lg:px-8 gap-8">
-        {/* SIDEBAR NAVIGATION */}
-        <aside className="w-full flex-shrink-0 md:w-60 md:min-w-[15rem] md:max-w-[15rem]">
-          <SettingsNav />
-        </aside>
+      {/* MAIN LAYOUT */}
+      <div className="flex-1 flex flex-col min-w-0">
+        
+        {/* TOPBAR */}
+        <header className="h-[72px] flex items-center justify-end px-8 bg-transparent">
+          <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
+        </header>
 
-        {/* CONTENT PANEL */}
-        <main className="dashboard-panel min-w-0 flex-1 p-6">
-          {children}
+        <main className="flex-1 overflow-y-auto px-10 py-6">
+          <div className="max-w-[1400px]">
+            {children}
+          </div>
         </main>
       </div>
     </div>

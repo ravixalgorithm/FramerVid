@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Video } from '@framevid/types';
 
@@ -21,6 +21,8 @@ import {
 } from '../../lib/capture-video-frame';
 import { resolveMediaUrl } from '../../lib/asset-url';
 import { useNotifications } from '@/components/notifications/NotificationProvider';
+import { CustomVideoPlayer } from '@/components/player/CustomVideoPlayer';
+import { ShareModal } from '@/components/ShareModal';
 
 interface ClientProps {
   initialVideo: any;
@@ -82,6 +84,8 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
   // Tab configuration
   const [activeTab, setActiveTab] = useState<TabType>('metadata');
 
+  const [showShareModal, setShowShareModal] = useState(false);
+
   // Input Configuration states
   const [editTitle, setEditTitle] = useState(video.title);
   const [editDescription, setEditDescription] = useState(video.description || '');
@@ -90,13 +94,13 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
   const [editLoop, setEditLoop] = useState(video.settings.loop ?? false);
   const [editMuted, setEditMuted] = useState(video.settings.muted ?? false);
   const [editControlsStyle, setEditControlsStyle] = useState<'show' | 'hide' | 'on-hover'>(video.settings.controlsStyle ?? 'show');
+  const [editTheme, setEditTheme] = useState<string>((video.settings as any)?.theme ?? 'default');
   const [editPrimaryColor, setEditPrimaryColor] = useState(video.settings.primaryColor ?? '#5B4FE8');
   const [editBgColor, setEditBgColor] = useState<string>((video.settings as any)?.bgColor ?? '#000000');
   const [editCaptionBgColor, setEditCaptionBgColor] = useState<string>((video.settings as any)?.captionBgColor ?? 'rgba(0, 0, 0, 0.75)');
   const [editCaptionTextColor, setEditCaptionTextColor] = useState<string>((video.settings as any)?.captionTextColor ?? '#ffffff');
   const [editCaptionFontFamily, setEditCaptionFontFamily] = useState<string>((video.settings as any)?.captionFontFamily ?? 'Inter, system-ui, sans-serif');
-  const [editCaptionFontSize, setEditCaptionFontSize] = useState<string>((video.settings as any)?.captionFontSize ?? '1rem');  const [editPrivacy, setEditPrivacy] = useState<'public' | 'unlisted' | 'password'>(video.settings.privacy ?? 'public');
-  const [editPassword, setEditPassword] = useState<string>('');
+  const [editCaptionFontSize, setEditCaptionFontSize] = useState<string>((video.settings as any)?.captionFontSize ?? '1rem');
   const [editDownloadEnabled, setEditDownloadEnabled] = useState(video.settings.downloadEnabled ?? false);
   
   // CTA States
@@ -193,11 +197,16 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
   const [thumbnailAction, setThumbnailAction] = useState<'frame' | 'upload' | null>(null);
   const [posterPreviewKey, setPosterPreviewKey] = useState(0);
+  const [thumbnailModalOpen, setThumbnailModalOpen] = useState(false);
+  const [thumbnailModalTab, setThumbnailModalTab] = useState<'frame' | 'upload'>('frame');
+  const [scrubTime, setScrubTime] = useState(0);
+  const thumbnailUploadRef = useRef<HTMLInputElement>(null);
   const [captionsPreviewKey, setCaptionsPreviewKey] = useState(0);
   const captionInputRef = useRef<HTMLInputElement>(null);
   const [captionAction, setCaptionAction] = useState<'upload' | 'remove' | 'generate' | null>(null);
 
   const [captionStylingOpen, setCaptionStylingOpen] = useState(false);
+  const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
 
   const handleGenerateAICaptions = async () => {
     if (!video.audioExtracted) return;
@@ -358,7 +367,6 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
   // Prevent unused variables compile warning in tsc
   const _unused = {
-    setEditPrivacy,
     setEditDownloadEnabled,
     setEditCtaEnabled,
     setEditCtaText,
@@ -406,6 +414,34 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
   const isPlayingRef = useRef(false);
   // Audio tab removed
   const mainDurationRef = useRef<number>(0);
+
+  // Sync previewVideoRef to the actual <video> element inside CustomVideoPlayer
+  const getVideoElement = useCallback((): HTMLVideoElement | null => {
+    if (previewVideoRef.current) return previewVideoRef.current;
+    const container = document.getElementById(`player-${video.id}`);
+    const el = container?.querySelector('video') ?? null;
+    if (el) previewVideoRef.current = el as HTMLVideoElement;
+    return el as HTMLVideoElement | null;
+  }, [video.id]);
+
+  // Keep ref synced after player mounts
+  useEffect(() => {
+    const timer = setTimeout(() => { getVideoElement(); }, 500);
+    return () => clearTimeout(timer);
+  }, [getVideoElement]);
+
+  const handleChartSeek = useCallback((time: number) => {
+    // Find ALL video elements and seek the one that's loaded
+    const allVideos = document.querySelectorAll('video');
+    console.log('[ChartSeek] time:', time, 'found videos:', allVideos.length);
+    for (const videoEl of allVideos) {
+      if (videoEl.duration && videoEl.duration > 0) {
+        console.log('[ChartSeek] seeking video to', time, 'duration:', videoEl.duration);
+        videoEl.currentTime = time;
+        break;
+      }
+    }
+  }, []);
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [settingsMenuState, setSettingsMenuState] = useState<'closed' | 'main' | 'speed' | 'quality'>('closed');
@@ -515,6 +551,35 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
     return () => destroyPreviewHls();
   }, [video.id, video.status, hlsManifestSrc]);
+
+  // HLS for thumbnail scrub video
+  useEffect(() => {
+    if (!thumbnailModalOpen || thumbnailModalTab !== 'frame' || !video.hlsManifestUrl) return;
+    const manifestUrl = resolveMediaUrl(video.hlsManifestUrl) || '';
+    if (!manifestUrl) return;
+
+    let hls: any = null;
+    const initHls = async () => {
+      const vid = document.getElementById('thumbnail-scrub-video') as HTMLVideoElement;
+      if (!vid) {
+        setTimeout(initHls, 100);
+        return;
+      }
+      const { default: Hls } = await import('hls.js');
+      if (Hls.isSupported()) {
+        hls = new Hls({ startLevel: -1 });
+        hls.loadSource(manifestUrl);
+        hls.attachMedia(vid);
+      } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+        vid.src = manifestUrl;
+      }
+    };
+    initHls();
+
+    return () => {
+      if (hls) hls.destroy();
+    };
+  }, [thumbnailModalOpen, thumbnailModalTab, video.hlsManifestUrl]);
 
   // Copy helpers
   const handleCopyId = () => {
@@ -947,10 +1012,11 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
       return;
     }
 
-    const el = previewVideoRef.current;
+    const modalVid = document.getElementById('thumbnail-scrub-video') as HTMLVideoElement | null;
+    const el = modalVid || getVideoElement();
     if (!el) {
       notifyInfo('Select a frame', {
-        message: 'Scrub the preview on the right to the frame you want.',
+        message: 'Scrub the preview to the frame you want.',
       });
       return;
     }
@@ -1076,8 +1142,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
             captionTextColor: editCaptionTextColor,
             captionFontFamily: editCaptionFontFamily,
             captionFontSize: editCaptionFontSize,
-            privacy: editPrivacy,
-            password: editPrivacy === 'password' ? editPassword : undefined,
+            // Privacy is managed entirely by the Share Modal now
             downloadEnabled: editDownloadEnabled,
             ctaEnabled: editCtaEnabled,
             ctaText: editCtas[0]?.text ?? editCtaText,
@@ -1139,6 +1204,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
             showPlaybackSpeed: editShowPlaybackSpeed,
             showSelectQuality: editShowSelectQuality,
             showCaptionsControl: editShowCaptionsControl,
+            theme: editTheme,
           }
         })
       });
@@ -1187,94 +1253,27 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
   return (
     <div className="dash-shell font-sans">
       
-      {/* TOP HEADER */}
-      <header className="dash-topbar">
+      {/* VIMEO-STYLE SINGLE HEADER */}
+      <header className="flex h-16 items-center justify-between px-4 sm:px-6 bg-[#F6F8FA] z-40 relative">
         <div className="flex items-center gap-4">
-          <button type="button" onClick={() => router.push('/')} className="cursor-pointer transition-opacity hover:opacity-85">
+          <button type="button" onClick={() => router.push('/')} className="cursor-pointer transition-opacity hover:opacity-85 mr-2">
             <Logo />
           </button>
 
-          {/* Workspace selector */}
-          {workspace && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}
-                className="workspace-select !py-1.5 text-xs"
-              >
-                <span className="truncate max-w-[140px] sm:max-w-[200px]">{workspace.name}</span>
-                <span className="plan-pill !ml-0">{workspace.plan}</span>
-                <svg className="h-3 w-3 shrink-0 text-[hsl(var(--muted))]" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 3a.75.75 0 0 1 .55.24l3.25 3.5a.75.75 0 1 1-1.1 1.02L10 4.852 7.3 7.76a.75.75 0 0 1-1.1-1.02l3.25-3.5A.75.75 0 0 1 10 3Zm0 14a.75.75 0 0 1-.55-.24l-3.25-3.5a.75.75 0 1 1 1.1-1.02l2.7 2.908 2.7-2.908a.75.75 0 1 1 1.1 1.02l-3.25 3.5A.75.75 0 0 1 10 17Z" clipRule="evenodd" />
-                </svg>
-              </button>
-
-              {workspaceDropdownOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setWorkspaceDropdownOpen(false)} />
-                  <div className="menu-popover left-0 z-50 mt-1.5 w-64 origin-top-left">
-                    <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[hsl(var(--muted))]">Workspaces</div>
-                    <button type="button" className="menu-popover-item justify-between !bg-[hsl(var(--accent-muted))] !text-[hsl(var(--accent))]">
-                      <span className="truncate">{workspace.name}</span>
-                      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                    <button type="button" onClick={() => router.push('/')} className="menu-popover-item">
-                      Back to Library
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
-      </header>
-
-      {/* BREADCRUMB / ACTION ROW */}
-      <section className="detail-subheader">
-        <div className="space-y-1">
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-2 text-xs font-semibold text-[hsl(var(--muted))]">
-            <span className="cursor-pointer hover:text-[hsl(var(--accent))]" onClick={() => router.push('/')}>
-              {workspace ? workspace.name : 'Workspace'}
+          {/* Breadcrumb / Title */}
+          <div className="flex items-center text-[13px] font-medium text-gray-500">
+            <span className="cursor-pointer hover:text-gray-900 transition-colors" onClick={() => router.push('/')}>
+              {workspace ? workspace.name : 'Library'}
             </span>
-            <span>&gt;</span>
-            <span className="text-[hsl(var(--foreground)/0.55)]">{video.title}</span>
+            <svg className="w-4 h-4 mx-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+            <span className="text-gray-900 font-semibold">{video.title}</span>
           </div>
 
-          {/* Title and stats */}
-          <h1 className="text-2xl font-semibold tracking-[-0.03em] text-[hsl(var(--foreground))] sm:text-[1.75rem]">{video.title}</h1>
-          <div className="mt-1 flex items-center gap-4 text-xs font-semibold text-[hsl(var(--muted))]">
-            <span className="flex items-center gap-1">
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><circle cx="12" cy="12" r="3" /></svg>
-              0
-            </span>
-            <span className="flex items-center gap-1">
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-              {formatDuration(video.durationSeconds)}
-            </span>
-            <span className="flex items-center gap-1">
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v16.5h16.5V3.75H3.75Zm1.5 1.5h13.5v13.5H5.25V5.25Z" /></svg>
-              {getResolutionString(video)}
-            </span>
-          </div>
+
         </div>
 
-        {/* Action buttons */}
-        <div className="mt-4 flex items-center gap-2 md:mt-0">
-          <button
-            onClick={() => notifyInfo('Share options coming soon')}
-            className="btn-accent !h-9 flex items-center gap-1.5 px-4 text-xs font-bold rounded-lg shadow-sm"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186.002-.006a2.25 2.25 0 1 0-.002.006Zm0 2.186.002.006a2.25 2.25 0 1 0-.002-.006Zm9.58-4.14a2.25 2.25 0 1 0 0-3.186 2.25 2.25 0 0 0 0 3.186Zm0 6.14a2.25 2.25 0 1 0 0 3.186 2.25 2.25 0 0 0 0-3.186ZM16.5 7.5l-9.3-5.4M16.5 16.5l-9.3 5.4" />
-            </svg>
-            Share
-          </button>
-          
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Action icons */}
           <button
             type="button"
             onClick={() => {
@@ -1293,68 +1292,143 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
                 notifyInfo('Could not download the video');
               }
             }}
-            className="icon-button !h-9 !w-9"
+            className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 p-2 rounded-full transition-colors"
             title="Download Video"
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+            <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
           </button>
 
           <button
-            type="button"
-            onClick={handleCopyId}
-            className="icon-button !h-9 !w-9"
-            title="Options"
+            onClick={() => setShowShareModal(true)}
+            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-1.5 rounded-full text-sm font-bold flex items-center gap-1.5 transition-colors shadow-sm ml-1"
           >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z" />
+            <svg className="h-[18px] w-[18px]" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
             </svg>
+            Share
           </button>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOptionsMenuOpen(!optionsMenuOpen)}
+              className="text-gray-500 hover:text-gray-900 p-1.5 transition-colors"
+              title="Options"
+            >
+              <svg className="h-5 w-5 transform rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+              </svg>
+            </button>
+
+            {optionsMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setOptionsMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 w-48 rounded-xl bg-white shadow-[0_4px_24px_rgba(0,0,0,0.12)] border border-gray-100 z-50 py-2 flex flex-col">
+                  
+                  <button onClick={() => {
+                    setOptionsMenuOpen(false);
+                    if (!video.id) return;
+                    try {
+                      const downloadUrl = `/api/videos/${video.id}/download`;
+                      const a = document.createElement('a');
+                      a.href = downloadUrl;
+                      a.download = video.originalFilename || 'video.mp4';
+                      a.target = '_blank';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    } catch (err) {
+                      notifyInfo('Could not download the video');
+                    }
+                  }} className="text-left px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 flex items-center gap-3">
+                    <svg className="w-[18px] h-[18px] text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Download...
+                  </button>
+
+                  <button onClick={() => { setOptionsMenuOpen(false); window.open(`/v/${video.id}`, '_blank'); }} className="text-left px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 flex items-center gap-3">
+                    <svg className="w-[18px] h-[18px] text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                    View video page
+                  </button>
+
+                  <button onClick={() => { setOptionsMenuOpen(false); handleCopyId(); }} className="text-left px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 flex items-center gap-3">
+                    <svg className="w-[18px] h-[18px] text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
+                    Copy Video ID
+                  </button>
+                  
+                  <div className="h-px bg-gray-100 my-1"></div>
+
+                  <button onClick={async () => { 
+                    setOptionsMenuOpen(false); 
+                    if (!window.confirm('Are you sure you want to delete this video? This cannot be undone.')) return;
+                    try {
+                      const res = await fetch(`/api/videos/${video.id}`, { method: 'DELETE' });
+                      if (!res.ok) throw new Error('Failed to delete');
+                      router.push('/');
+                      router.refresh();
+                    } catch (e: any) {
+                      notifyError('Delete failed', { message: e.message });
+                    }
+                  }} className="text-left px-4 py-2 text-[14px] text-gray-700 hover:bg-gray-100 flex items-center gap-3">
+                    <svg className="w-[18px] h-[18px] text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                    Delete
+                  </button>
+
+                </div>
+              </>
+            )}
+          </div>
+          
+          <div className="w-px h-5 bg-gray-200 mx-1"></div>
+          
+          <ProfileMenu userInitial={userInitial} userName={user.name} userEmail={user.email} />
         </div>
-      </section>
+      </header>
 
-      {/* 3-COLUMN ENTERPRISE SPLIT LAYOUT */}
-      <div className="flex flex-1 flex-col lg:flex-row lg:h-[calc(100vh-142px)] lg:overflow-hidden">
+      {/* 2-COLUMN SPLIT WITH TOP TABS */}
+      <div className="flex flex-1 flex-col h-[calc(100vh-64px)] overflow-hidden">
         
-        {/* COLUMN 1: SIDEBAR TABS */}
-        <aside className="detail-sidebar">
-          <nav className="flex flex-col gap-1">
-            <span className="section-label mb-2 block px-3">Settings</span>
-            {[
-              { id: 'analytics', label: 'Analytics' },
-              { id: 'metadata', label: 'Metadata' },
-              { id: 'thumbnail', label: 'Thumbnail' },
-              { id: 'player', label: 'Player' },
-              { id: 'controls', label: 'Controls' },
-              { id: 'colors', label: 'Colors' },
-              { id: 'play-button', label: 'Play button' },
-              { id: 'cta', label: 'Call to action' },
-              { id: 'form', label: 'Form' },
-              { id: 'subtitles', label: 'Subtitles' },
-              { id: 'danger', label: 'Danger Zone' },
-            ].map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as TabType)}
-                  className={`detail-tab ${isActive ? 'detail-tab-active' : 'detail-tab-idle'}`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
+        {/* HORIZONTAL TABS BAR */}
+        <div className="bg-[#F6F8FA] px-4 sm:px-8 py-3 flex gap-2 overflow-x-auto no-scrollbar shrink-0 items-center">
+          {[
+            { id: 'analytics', label: 'Analytics' },
+            { id: 'metadata', label: 'Metadata' },
+            { id: 'thumbnail', label: 'Thumbnail' },
+            { id: 'player', label: 'Player' },
+            { id: 'controls', label: 'Controls' },
+            { id: 'colors', label: 'Colors' },
+            { id: 'play-button', label: 'Play button' },
+            { id: 'cta', label: 'Call to action' },
+            { id: 'form', label: 'Form' },
+            { id: 'subtitles', label: 'Subtitles' },
+            { id: 'danger', label: 'Danger Zone' },
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as TabType)}
+                className={`detail-tab ${isActive ? 'detail-tab-active' : 'detail-tab-idle'}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
 
-        {/* COLUMN 2: TAB EDIT FORMS */}
-        <section className="detail-editor">
+        {/* CONTENT SPLIT (50/50) */}
+        <div className="flex flex-1 flex-col lg:flex-row overflow-hidden bg-[#F6F8FA]">
+          
+          {/* COLUMN 1: TAB EDIT FORMS */}
+          <section className="detail-editor">
           <div className="space-y-6">
             
             {/* Metadata Tab Form */}
             {activeTab === 'metadata' && (
-              <div className="space-y-5">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-5">
                 <div>
                   <label className="text-[11px] font-bold text-gray-500 block mb-1.5">Title</label>
                   <input
@@ -1391,82 +1465,42 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
                   </p>
                 </div>
 
-                <div>
-                  <label className="text-[11px] font-bold text-gray-500 block mb-1.5">Privacy</label>
-                  <select
-                    value={editPrivacy}
-                    onChange={(e) => setEditPrivacy(e.target.value as 'public' | 'unlisted' | 'password')}
-                    className="w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-xs font-semibold text-gray-900 outline-none focus:border-accent focus:ring-4 focus:ring-[hsl(var(--accent)/0.15)] transition"
-                  >
-                    <option value="public">Public</option>
-                    <option value="unlisted">Unlisted</option>
-                    <option value="password">Password Protected</option>
-                  </select>
-                </div>
-
-                {editPrivacy === 'password' && (
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-500 block mb-1.5">Password</label>
-                    <input
-                      type="text"
-                      value={editPassword}
-                      onChange={(e) => setEditPassword(e.target.value)}
-                      className="detail-field"
-                      placeholder={video.settings.passwordHash ? "•••••••• (Password set)" : "Enter new password"}
-                    />
-                  </div>
-                )}
               </div>
             )}
 
             {/* Thumbnail Tab */}
             {activeTab === 'thumbnail' && (
-              <div className="space-y-4">
-                <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                  <p className="text-[11px] font-bold text-gray-500 mb-2">Thumbnail</p>
-                  <div className="aspect-video w-full overflow-hidden rounded-lg bg-gray-100">
-                    {thumbnailFor(video, posterPreviewKey) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={posterPreviewKey}
-                        src={thumbnailFor(video, posterPreviewKey)}
-                        alt="Selected thumbnail"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-center px-4">
-                        <p className="text-xs font-semibold text-gray-500">No thumbnail selected</p>
-                        <p className="text-[10px] font-medium text-gray-400">
-                          Scrub the preview, then select a frame or upload an image.
-                        </p>
-                      </div>
-                    )}
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-4">
+                {/* Thumbnail Preview Row */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Thumbnail</p>
+                  <div className="flex gap-3">
+                    {/* + Button */}
+                    <button
+                      type="button"
+                      onClick={() => { setThumbnailModalOpen(true); setThumbnailModalTab('frame'); }}
+                      className="w-28 aspect-video rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 flex items-center justify-center hover:border-gray-400 hover:bg-gray-100 transition-all cursor-pointer group flex-shrink-0"
+                    >
+                      <svg className="w-7 h-7 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                      </svg>
+                    </button>
+                    {/* Current Thumbnail */}
+                    <div className="flex-1 aspect-video rounded-xl overflow-hidden bg-gray-900 border border-gray-200">
+                      {thumbnailFor(video, posterPreviewKey) ? (
+                        <img
+                          key={posterPreviewKey}
+                          src={thumbnailFor(video, posterPreviewKey)}
+                          alt="Selected thumbnail"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center">
+                          <p className="text-[10px] font-medium text-gray-500">No thumbnail</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    disabled={thumbnailAction !== null || video.status !== 'ready'}
-                    onClick={handleSelectPosterFrame}
-                    className="btn-action-accent flex-1"
-                  >
-                    {thumbnailAction === 'frame' ? 'Capturing…' : 'Select frame'}
-                  </button>
-                  <label
-                    className={`btn-action-secondary relative flex-1 cursor-pointer text-center ${
-                      thumbnailAction !== null ? 'pointer-events-none opacity-50' : ''
-                    }`}
-                  >
-                    {thumbnailAction === 'upload' ? 'Uploading…' : 'Upload'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={thumbnailAction !== null}
-                      onChange={handleThumbnailUpload}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                    />
-                  </label>
                 </div>
 
                 <div className="border-t border-gray-150 my-3" />
@@ -1496,9 +1530,153 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
               </div>
             )}
 
+            {/* Thumbnail Modal */}
+            {thumbnailModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setThumbnailModalOpen(false)}>
+                <div className="bg-white rounded-2xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between px-6 pt-5 pb-3">
+                    <h3 className="text-lg font-bold text-gray-900">Add thumbnail</h3>
+                    <button onClick={() => setThumbnailModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+
+                  {/* Tab Switcher */}
+                  <div className="mx-6 mb-4 flex bg-gray-100 rounded-full p-1">
+                    <button
+                      onClick={() => setThumbnailModalTab('frame')}
+                      className={`flex-1 text-sm font-semibold py-2 rounded-full transition-all ${
+                        thumbnailModalTab === 'frame'
+                          ? 'bg-white text-gray-900 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >Select from video</button>
+                    <button
+                      onClick={() => setThumbnailModalTab('upload')}
+                      className={`flex-1 text-sm font-semibold py-2 rounded-full transition-all ${
+                        thumbnailModalTab === 'upload'
+                          ? 'bg-white text-gray-900 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >Upload image</button>
+                  </div>
+
+                  {/* Tab Content */}
+                  <div className="px-6 pb-6">
+                    {thumbnailModalTab === 'frame' ? (
+                      <div className="space-y-4">
+                        {/* Frame Preview */}
+                        <div className="aspect-video w-full rounded-xl overflow-hidden bg-black border border-gray-200 relative">
+                          <video
+                            id="thumbnail-scrub-video"
+                            crossOrigin="anonymous"
+                            muted
+                            playsInline
+                            className="w-full h-full object-contain"
+                            onLoadedMetadata={(e) => {
+                              const vid = e.currentTarget;
+                              if (vid.duration && vid.duration > 0) {
+                                setScrubTime(0);
+                              }
+                            }}
+                          />
+                          <div className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-mono px-2 py-0.5 rounded-md">
+                            {formatDuration(scrubTime)} / {formatDuration(duration)}
+                          </div>
+                        </div>
+
+                        {/* Scrub Slider */}
+                        <div className="relative">
+                          <input
+                            type="range"
+                            min={0}
+                            max={duration || 100}
+                            step={0.1}
+                            value={scrubTime}
+                            onChange={(e) => {
+                              const t = parseFloat(e.target.value);
+                              setScrubTime(t);
+                              const vid = document.getElementById('thumbnail-scrub-video') as HTMLVideoElement;
+                              if (vid) vid.currentTime = t;
+                            }}
+                            className="w-full h-2 rounded-full appearance-none bg-gray-200 cursor-pointer"
+                            style={{ accentColor: 'hsl(var(--accent))' }}
+                          />
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex justify-end gap-3 pt-2">
+                          <button
+                            onClick={() => setThumbnailModalOpen(false)}
+                            className="px-5 py-2.5 rounded-full text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition"
+                          >Cancel</button>
+                          <button
+                            disabled={thumbnailAction === 'frame'}
+                            onClick={async () => {
+                              await handleSelectPosterFrame();
+                              setThumbnailModalOpen(false);
+                            }}
+                            className="px-5 py-2.5 rounded-full text-sm font-bold text-white bg-gray-900 hover:bg-gray-800 transition disabled:opacity-50"
+                          >{thumbnailAction === 'frame' ? 'Capturing…' : 'Save'}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {/* Upload Area */}
+                        <div
+                          className="flex flex-col items-center justify-center py-12 border-2 border-dashed border-gray-300 rounded-xl bg-gray-50 hover:bg-gray-100 transition cursor-pointer"
+                          onClick={() => thumbnailUploadRef.current?.click()}
+                        >
+                          <svg className="w-10 h-10 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.338-2.39 4.502 4.502 0 013.516 5.855A3 3 0 0118 19.5H6.75z" />
+                          </svg>
+                          <p className="text-sm font-semibold text-gray-700">Select a file to upload</p>
+                          <p className="text-xs text-gray-400 mt-1">JPG, PNG or WEBP. Max 10MB</p>
+                          <button
+                            type="button"
+                            className="mt-4 px-5 py-2 rounded-full text-sm font-semibold text-gray-700 border border-gray-300 hover:bg-white transition"
+                            onClick={(e) => { e.stopPropagation(); thumbnailUploadRef.current?.click(); }}
+                          >Browse files</button>
+                          <input
+                            ref={thumbnailUploadRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              await handleThumbnailUpload(e);
+                              setThumbnailModalOpen(false);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Player Tab Form */}
             {activeTab === 'player' && (
-              <div className="space-y-4">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-4">
+
+                {/* Theme Selector */}
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">Player Theme</label>
+                  <select
+                    value={editTheme}
+                    onChange={(e) => setEditTheme(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-800 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
+                  >
+                    <option value="default">Default</option>
+                    <option value="minimal">Minimal</option>
+                    <option value="gradient">Gradient</option>
+                    <option value="outlined">Outlined</option>
+                    <option value="floating">Floating</option>
+                  </select>
+                </div>
+
+                <div className="border-t border-gray-100" />
                 
                 {/* Autoplay */}
                 <div className="flex items-center justify-between py-2.5 select-none">
@@ -1756,7 +1934,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Controls Tab Form */}
             {activeTab === 'controls' && (
-              <div className="space-y-4">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-4">
                 <div>
                   <label className="text-[11px] font-bold text-gray-500 block mb-1.5">Visibility Mode</label>
                   <select
@@ -1999,7 +2177,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Colors Tab Form */}
             {activeTab === 'colors' && (
-              <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-6">
                 
                 {/* Primary color */}
                 <div className="space-y-2">
@@ -2066,7 +2244,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Play Button tab */}
             {activeTab === 'play-button' && (
-              <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-6">
                 
                 {/* Play button */}
                 <div className="space-y-2">
@@ -2271,7 +2449,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Call to action tab */}
             {activeTab === 'cta' && (
-              <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-6">
                 
                 {/* CTA Toggle */}
                 <div className="flex items-center gap-3 py-1.5 select-none">
@@ -2663,7 +2841,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Form tab */}
             {activeTab === 'form' && (
-              <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-6">
                 
                 {/* Form Toggle */}
                 <div className="flex items-center gap-3 py-1.5 select-none">
@@ -3212,7 +3390,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Subtitles tab */}
             {activeTab === 'subtitles' && (
-              <div className="space-y-4">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-4">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Closed Captions</h3>
 
                 {video.captionsUrl ? (
@@ -3482,7 +3660,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
 
             {/* Danger Zone tab */}
             {activeTab === 'danger' && (
-              <div className="space-y-4">
+              <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.02)] border border-gray-200 space-y-4">
                 <h3 className="text-xs font-bold text-red-500 uppercase tracking-wider">Danger Zone</h3>
                 <p className="text-[10px] text-gray-500 leading-relaxed font-semibold">
                   This action is permanent and non-reversible. Deleting this asset will purge all manifest files from storage and clean up DB records completely.
@@ -3513,7 +3691,11 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
             {/* Analytics Tab (already imported and rendered) */}
             {activeTab === 'analytics' && (
               <div className="border-t border-[hsl(var(--hairline))] pt-2">
-                <VideoAnalytics videoId={video.id} />
+                <VideoAnalytics 
+                  videoId={video.id} 
+                  duration={duration}
+                  onHover={handleChartSeek}
+                />
               </div>
             )}
 
@@ -3580,639 +3762,105 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
               }}
               className="group relative overflow-hidden rounded-xl border border-[hsl(var(--hairline))] shadow-[0_20px_50px_-16px_rgba(15,23,42,0.2)] ring-1 ring-black/5"
             >
-              <style dangerouslySetInnerHTML={{ __html: `
-                #player-${video.id} .hover-primary:hover {
-                  color: ${editPrimaryColor} !important;
-                }
-                #player-${video.id} .hover-primary-border:hover {
-                  color: ${editPrimaryColor} !important;
-                  border-color: ${editPrimaryColor} !important;
-                }
-                #player-${video.id} ::cue {
-                  background-color: ${editCaptionBgColor} !important;
-                  color: ${editCaptionTextColor} !important;
-                  font-family: ${editCaptionFontFamily} !important;
-                  font-size: ${editCaptionFontSize} !important;
-                }
-              ` }} />
-              {video.status === 'ready' ? (
-                <>
-                  <video
-                    ref={previewVideoRef}
-                    crossOrigin="anonymous"
-                    autoPlay={editAutoplay || editBgVideo}
-                    loop={editLoop || editBgVideo}
-                    muted={editMuted || editAutoplay || editBgVideo}
-                    controls={false}
-                    playsInline={editPlayInline || editBgVideo}
-                    poster={previewPosterUrl}
-                    onTimeUpdate={(e) => {
-                      handlePreviewTimeUpdate(e);
-                      setCurrentTime(e.currentTarget.currentTime);
-                    }}
-                    onDurationChange={(e) => {
-                      setDuration(e.currentTarget.duration);
-                    }}
-                    onPlay={() => setIsPlaying(true)}
-                    onPause={() => setIsPlaying(false)}
-                    onEnded={handlePreviewEnded}
-                    onLoadedMetadata={(e) => {
-                      handleLoadedMetadata(e);
-                      const tracks = e.currentTarget.textTracks;
-                      for (let i = 0; i < tracks.length; i++) {
-                        tracks[i].mode = (previewCaptionsSrc && ccEnabled) ? 'showing' : 'hidden';
-                      }
-                    }}
-                    onClick={togglePlay}
-                    className={`w-full h-full object-cover ${editClickToPlay ? 'cursor-pointer' : 'cursor-default'}`}
-                  >
-                    <track
-                      kind="subtitles"
-                      src={previewCaptionsSrc || ''}
-                      label="Captions"
-                      srcLang="en"
-                      default
-                      onLoad={(e) => {
-                        const t = (e.target as HTMLTrackElement).track;
-                        if (t && previewCaptionsSrc) {
-                          t.mode = ccEnabled ? 'showing' : 'hidden';
-                        }
-                      }}
-                    />
-                  </video>
-
-                  {/* Custom Poster Image Overlay */}
-                  {showPosterOverlay && previewPosterUrl && (
-                    <img 
-                      key={posterPreviewKey}
-                      src={previewPosterUrl} 
-                      className="absolute inset-0 w-full h-full object-cover z-10 pointer-events-none" 
-                      alt="Video Poster"
-                    />
-                  )}
-
-                  {/* Exit Thumbnail Overlay — shown when paused */}
-                  {editShowExitThumbnail && persistentPosterUrl && (
-                    <div 
-                      className={`absolute inset-0 z-[6] pointer-events-none transition-opacity duration-300 ${
-                        !isPlaying ? 'opacity-100' : 'opacity-0'
-                      }`}
-                      style={{
-                        backgroundImage: `url(${persistentPosterUrl})`,
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                      }}
-                    />
-                  )}
-
-                  {/* Central Large Play Button Overlay */}
-                  {editShowLargePlayButton && editControlsStyle !== 'hide' && !editBgVideo && !isPlaying && !previewFormVisible && (
-                    <div 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        togglePlay();
-                      }}
-                      className="absolute inset-0 z-20 flex items-center justify-center bg-black/10 cursor-pointer transition-opacity duration-150"
-                    >
-                      <button
-                        style={{
-                          backgroundColor: editPlayButtonBgTransparent ? 'transparent' : editPrimaryColor,
-                          width: editPlayButtonText ? undefined : `${editPlayButtonSize}px`,
-                          height: editPlayButtonText ? undefined : `${editPlayButtonSize}px`,
-                          borderWidth: `${editPlayButtonBorderWidth}px`,
-                          borderColor: editPlayButtonBorderColor,
-                          borderStyle: editPlayButtonBorderWidth > 0 ? 'solid' : 'none',
-                          borderRadius: editPlayButtonText 
-                            ? '9999px' 
-                            : editPlayButtonStyle === 'circle' 
-                            ? '9999px' 
-                            : editPlayButtonStyle === 'rounded' 
-                            ? '12px' 
-                            : '0px',
-                        }}
-                        className={`text-white flex items-center justify-center gap-2.5 shadow-2xl transition-opacity duration-150 hover:opacity-90 ${
-                          editPlayButtonText ? 'px-6 py-3 text-xs font-extrabold uppercase tracking-wider' : ''
-                        }`}
-                        title="Play video"
-                      >
-                        {editPlayButtonIconUrl ? (
-                          <img 
-                            src={editPlayButtonIconUrl} 
-                            style={{
-                              width: `${Math.round(editPlayButtonSize * (editPlayButtonIconScale / 100))}px`,
-                              height: `${Math.round(editPlayButtonSize * (editPlayButtonIconScale / 100))}px`
-                            }}
-                            className="object-contain" 
-                            alt="Play Icon" 
-                          />
-                        ) : (
-                          <svg 
-                            style={{
-                              width: editPlayButtonText ? '16px' : `${Math.round(editPlayButtonSize * (editPlayButtonIconScale / 100))}px`,
-                              height: editPlayButtonText ? '16px' : `${Math.round(editPlayButtonSize * (editPlayButtonIconScale / 100))}px`
-                            }}
-                            className={editPlayButtonText ? "fill-current translate-x-[0.5px]" : "fill-current translate-x-[2px]"} 
-                            viewBox="0 0 24 24"
-                          >
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
-                        )}
-                        {editPlayButtonText && <span>{editPlayButtonText}</span>}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Watermark Logo Overlay */}
-                  {editBrandingEnabled && editBrandingLogoUrl && (
-                    <div className={`absolute z-10 select-none flex items-center gap-1 opacity-80 pointer-events-none ${
-                      editBrandingPosition === 'top-left' ? 'top-4 left-4' :
-                      editBrandingPosition === 'top-right' ? 'top-4 right-4' :
-                      editBrandingPosition === 'bottom-left' ? 'bottom-4 left-4' :
-                      'bottom-4 right-4'
-                    }`}>
-                      <img 
-                        src={editBrandingLogoUrl} 
-                        alt="Logo" 
-                        style={{ maxWidth: `${editBrandingSize}px`, objectFit: 'contain', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Custom control bar */}
-                  {editControlsStyle !== 'hide' && !editBgVideo && (
-                    <div
-                      className={[
-                        'absolute bottom-3 left-3 right-3 z-25 bg-black/75 backdrop-blur-sm rounded-lg p-2.5 flex flex-col gap-2 border border-white/10 transition-opacity duration-300 group/controls',
-                        editControlsStyle === 'show' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                      ].join(' ')}
-                    >
-                      {/* Popularity Graph */}
-                      {(() => {
-                        const rawPopularity = (video as any).popularityCurve;
-                        const popularityCurve = rawPopularity?.length ? rawPopularity : [
-                          5, 12, 18, 25, 35, 60, 95, 100, 85, 50, 
-                          30, 25, 40, 65, 75, 55, 35, 20, 15, 10, 5
-                        ];
-                        if (!popularityCurve?.length) return null;
-                        
-                        const w = 200;
-                        const h = 40;
-                        const step = w / Math.max(popularityCurve.length - 1, 1);
-                        const pts = popularityCurve.map((v: number, i: number) => {
-                          const x = i * step;
-                          const y = h - (Math.max(0, Math.min(100, v)) / 100) * (h * 0.85);
-                          return { x, y };
-                        });
-                        const popularityPath = pts.reduce((path: string, pt: {x: number, y: number}, i: number) => {
-                          if (i === 0) return `M${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
-                          const prev = pts[i - 1];
-                          const cpX = (prev.x + pt.x) / 2;
-                          return `${path} C${cpX.toFixed(1)},${prev.y.toFixed(1)} ${cpX.toFixed(1)},${pt.y.toFixed(1)} ${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
-                        }, '');
-                          
-                        return (
-                          <div className="absolute left-0 right-0 pointer-events-none z-10 opacity-0 group-hover/controls:opacity-100 transition-opacity duration-300" style={{ bottom: '100%', height: '40px', padding: '0 10px' }}>
-                            <svg width="100%" height="40" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden>
-                              <defs>
-                                <linearGradient id="fv-popularity-fill-dash" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="0%" stopColor="rgba(255,255,255,0.25)" />
-                                  <stop offset="100%" stopColor="rgba(255,255,255,0.0)" />
-                                </linearGradient>
-                              </defs>
-                              <path d={`${popularityPath} L200,40 L0,40 Z`} fill="url(#fv-popularity-fill-dash)" />
-                              <path d={popularityPath} fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" />
-                            </svg>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Scrubber */}
-                      {editShowProgress && (
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="relative w-full h-5 flex items-center cursor-pointer group/scrub"
-                            onClick={(e) => {
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                              const syntheticEvent = { target: { value: String(pct * (duration || 100)) } } as any;
-                              handleScrub(syntheticEvent);
-                            }}
-                          >
-                            {/* Track bg */}
-                            <div className="absolute left-0 right-0 h-[3px] rounded-full bg-white/20 group-hover/scrub:h-[5px] transition-all" />
-                            {/* Filled portion */}
-                            <div
-                              className="absolute left-0 h-[3px] rounded-full group-hover/scrub:h-[5px] transition-all"
-                              style={{
-                                width: `${duration ? (currentTime / duration) * 100 : 0}%`,
-                                backgroundColor: editPrimaryColor,
-                              }}
-                            />
-                            {/* Thumb */}
-                            <div
-                              className="absolute w-3 h-3 rounded-full shadow-md opacity-0 group-hover/scrub:opacity-100 transition-opacity -translate-x-1/2"
-                              style={{
-                                left: `${duration ? (currentTime / duration) * 100 : 0}%`,
-                                backgroundColor: editPrimaryColor,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Play, time, buttons */}
-                      <div className="flex items-center justify-between text-xs text-white">
-                        <div className="flex items-center gap-3">
-                          {editShowPlayPause && (
-                            <button onClick={togglePlay} className="hover-primary transition focus:outline-none">
-                              {isPlaying ? (
-                                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-                              ) : (
-                                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                              )}
-                            </button>
-                          )}
-                          
-                          {editShowCurrentTime && (
-                            <span className="font-mono text-[10px] opacity-80">
-                              {formatDuration(currentTime)} / {formatDuration(duration)}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2.5">
-                          {editShowMute && (
-                            <button
-                              onClick={() => {
-                                if (previewVideoRef.current) {
-                                  previewVideoRef.current.muted = !previewVideoRef.current.muted;
-                                  setEditMuted(!editMuted);
-                                }
-                              }}
-                              className="hover-primary transition focus:outline-none"
-                            >
-                              {editMuted ? (
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>
-                              ) : (
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>
-                              )}
-                            </button>
-                          )}
-
-                          {editShowVolume && (
-                            <input
-                              type="range"
-                              min={0}
-                              max={1}
-                              step={0.05}
-                              defaultValue={1}
-                              onChange={(e) => {
-                                if (previewVideoRef.current) {
-                                  previewVideoRef.current.volume = parseFloat(e.target.value);
-                                  previewVideoRef.current.muted = false;
-                                  setEditMuted(false);
-                                }
-                              }}
-                              style={{ accentColor: editPrimaryColor }}
-                              className="w-12 h-1 rounded-full cursor-pointer appearance-none bg-white/20 hover:bg-white/30 transition-colors"
-                            />
-                          )}
-                          {editShowCaptionsControl && previewCaptionsSrc && (
-                            <button
-                              onClick={() => setCcEnabled(!ccEnabled)}
-                              className={`hover-primary transition focus:outline-none ${ccEnabled ? 'text-white' : 'text-white/50'}`}
-                              title="Toggle Captions"
-                            >
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                <rect x="4" y="6" width="16" height="12" rx="2" ry="2" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 14c-.667.667-2 .667-2 0V10c0-.667 1.333-.667 2 0m6 4c-.667.667-2 .667-2 0V10c0-.667 1.333-.667 2 0" />
-                              </svg>
-                            </button>
-                          )}
-
-                          {editShowSettings && (
-                            <div className="relative">
-                              <button onClick={() => setSettingsMenuState(settingsMenuState === 'closed' ? 'main' : 'closed')} className="hover-primary transition focus:outline-none">
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.43l-1.003.828c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.43l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-                                  <circle cx="12" cy="12" r="3" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              </button>
-                              
-                              {settingsMenuState !== 'closed' && (
-                                <div className="absolute bottom-full mb-3 right-0 bg-black/90 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden shadow-2xl z-50 py-1.5 min-w-[160px] text-white">
-                                  
-                                  {settingsMenuState === 'main' && (
-                                    <>
-                                      {editShowSelectQuality && (
-                                        <button onClick={() => setSettingsMenuState('quality')} className="w-full px-4 py-2 text-xs font-medium hover:bg-white/10 transition-colors flex items-center justify-between group">
-                                          <div className="flex items-center gap-2">
-                                            <svg className="w-4 h-4 text-white/70 group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                            </svg>
-                                            Quality
-                                          </div>
-                                          <div className="flex items-center gap-1 text-white/50 text-[10px]">
-                                            {currentLevel === -1 ? 'Auto' : `${hlsLevels[currentLevel]?.height || 'HD'}p`}
-                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                            </svg>
-                                          </div>
-                                        </button>
-                                      )}
-                                      
-                                      {editShowPlaybackSpeed && (
-                                        <button onClick={() => setSettingsMenuState('speed')} className="w-full px-4 py-2 text-xs font-medium hover:bg-white/10 transition-colors flex items-center justify-between group">
-                                          <div className="flex items-center gap-2">
-                                            <svg className="w-4 h-4 text-white/70 group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
-                                            Speed
-                                          </div>
-                                          <div className="flex items-center gap-1 text-white/50 text-[10px]">
-                                            {playbackSpeed === 1 ? 'Normal' : `${playbackSpeed}x`}
-                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                            </svg>
-                                          </div>
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
-
-                                  {settingsMenuState === 'quality' && (
-                                    <>
-                                      <button onClick={() => setSettingsMenuState('main')} className="w-full px-4 py-2.5 border-b border-white/10 text-xs font-medium hover:bg-white/5 transition-colors flex items-center gap-2">
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                                        </svg>
-                                        Quality
-                                      </button>
-                                      <div className="py-1">
-                                        <button
-                                          onClick={() => {
-                                            if (hlsInstanceRef.current) hlsInstanceRef.current.currentLevel = -1;
-                                            setCurrentLevel(-1);
-                                            setSettingsMenuState('closed');
-                                          }}
-                                          className={`w-full text-left px-6 py-2 text-xs hover:bg-white/10 flex items-center gap-2 ${currentLevel === -1 ? 'text-[hsl(var(--accent))]' : ''}`}
-                                        >
-                                          {currentLevel === -1 && (
-                                            <svg className="w-3 h-3 absolute left-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                          )}
-                                          Auto
-                                        </button>
-                                        {[...hlsLevels].reverse().map((level, index) => {
-                                          const actualIndex = hlsLevels.length - 1 - index;
-                                          return (
-                                            <button
-                                              key={actualIndex}
-                                              onClick={() => {
-                                                if (hlsInstanceRef.current) hlsInstanceRef.current.currentLevel = actualIndex;
-                                                setCurrentLevel(actualIndex);
-                                                setSettingsMenuState('closed');
-                                              }}
-                                              className={`w-full text-left px-6 py-2 text-xs hover:bg-white/10 flex items-center gap-2 relative ${currentLevel === actualIndex ? 'text-[hsl(var(--accent))]' : ''}`}
-                                            >
-                                              {currentLevel === actualIndex && (
-                                                <svg className="w-3 h-3 absolute left-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                              )}
-                                              {level.height}p
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    </>
-                                  )}
-
-                                  {settingsMenuState === 'speed' && (
-                                    <>
-                                      <button onClick={() => setSettingsMenuState('main')} className="w-full px-4 py-2.5 border-b border-white/10 text-xs font-medium hover:bg-white/5 transition-colors flex items-center gap-2">
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                                        </svg>
-                                        Playback speed
-                                      </button>
-                                      <div className="py-1">
-                                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
-                                          <button
-                                            key={speed}
-                                            onClick={() => {
-                                              if (previewVideoRef.current) previewVideoRef.current.playbackRate = speed;
-                                              setPlaybackSpeed(speed);
-                                              setSettingsMenuState('closed');
-                                            }}
-                                            className={`w-full text-left px-6 py-2 text-xs hover:bg-white/10 flex items-center gap-2 relative ${playbackSpeed === speed ? 'text-[hsl(var(--accent))]' : ''}`}
-                                          >
-                                            {playbackSpeed === speed && (
-                                              <svg className="w-3 h-3 absolute left-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                            )}
-                                            {speed === 1 ? 'Normal' : `${speed}x`}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </>
-                                  )}
-
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {editShowFullscreen && (
-                            <button
-                              onClick={() => {
-                                if (!document.fullscreenElement) {
-                                  previewContainerRef.current?.requestFullscreen().catch(err => console.error(err));
-                                } else {
-                                  document.exitFullscreen();
-                                }
-                              }}
-                              className="hover-primary transition focus:outline-none"
-                            >
-                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9m5.25 11.25v-4.5m0 4.5h-4.5m4.5 0-6-6" /></svg>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Live Preview Form Overlay (Gating) */}
-                  {previewFormVisible && editFormEnabled && (
-                    <div
-                      className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4"
-                      style={{
-                        backgroundColor: `rgba(0,0,0,${Math.min(0.95, Math.max(0.05, editFormOverlayOpacity ?? 0.75))})`,
-                        backdropFilter: 'blur(8px)',
-                      }}
-                    >
-                      <div
-                        className="w-full max-w-[270px] rounded-xl p-6 shadow-2xl"
-                        style={{
-                          backgroundColor: editFormBgColor || '#ffffff',
-                          opacity: Math.min(1, Math.max(0.2, editFormCardOpacity ?? 1)),
-                          textAlign: editFormAlignment || 'center',
-                          fontFamily: editFormFontFamily || 'Inter, system-ui, sans-serif',
-                        }}
-                      >
-                        {showThankYou ? (
-                          <div className="py-6 text-center" style={{ color: editFormTextColor || '#000000' }}>
-                            <svg className="h-10 w-10 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" style={{ color: editFormButtonColor }}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                            </svg>
-                            <h3 className="text-sm font-bold">{editFormThankYouMessage || 'Thank you!'}</h3>
-                          </div>
-                        ) : (
-                          <form onSubmit={handlePreviewFormSubmit} className="flex flex-col gap-3">
-                            <h3 className="text-sm font-extrabold" style={{ color: editFormTextColor }}>{editFormTitle || 'Unlock this video'}</h3>
-                            <p className="text-[10px] opacity-75 font-semibold" style={{ color: editFormTextColor }}>{editFormDescription}</p>
-                            
-                            <div className="flex flex-col gap-2 my-1">
-                              {editFormFields.map(f => (
-                                <input
-                                  key={f.id}
-                                  type={f.type}
-                                  placeholder={f.required ? `${f.name} *` : f.name}
-                                  required={f.required}
-                                  value={previewFormData[f.id] || ''}
-                                  onChange={(e) => setPreviewFormData({ ...previewFormData, [f.id]: e.target.value })}
-                                  className="w-full px-2.5 py-1.5 rounded-lg text-[11px] outline-none shadow-inner"
-                                  style={{
-                                    border: `1px solid ${editFormFieldBorderColor || 'rgba(255,255,255,0.16)'}`,
-                                    backgroundColor: editFormFieldBgColor || 'rgba(255,255,255,0.08)',
-                                    color: editFormTextColor || '#ffffff',
-                                  }}
-                                />
-                              ))}
-                            </div>
-
-                            {editFormRequireConsent && (
-                              <label className="flex items-start gap-2 text-left">
-                                <input
-                                  type="checkbox"
-                                  required
-                                  className="mt-0.5"
-                                />
-                                <span className="text-[10px] font-semibold opacity-80" style={{ color: editFormTextColor }}>
-                                  {editFormConsentText || 'I agree to receive emails about this content.'}
-                                </span>
-                              </label>
-                            )}
-
-                            <button
-                              type="submit"
-                              disabled={previewFormSubmitting}
-                              className="w-full py-2 rounded-lg text-[11px] font-bold shadow disabled:opacity-60 disabled:cursor-not-allowed"
-                              style={{ backgroundColor: editFormButtonColor, color: editFormButtonTextColor }}
-                            >
-                              {previewFormSubmitting ? 'Submitting…' : editFormButtonText}
-                            </button>
-
-                            {previewFormError && (
-                              <div className="text-[10px] font-semibold text-red-600 text-left">
-                                {previewFormError}
-                              </div>
-                            )}
-
-                            {editFormSkipEnabled && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPreviewFormVisible(false);
-                                  if (editFormTime !== 'post-roll') {
-                                    previewVideoRef.current?.play().catch(() => {});
-                                  }
-                                }}
-                                className="text-[10px] font-bold underline opacity-60 hover:opacity-80 transition"
-                                style={{ color: editFormTextColor }}
-                              >
-                                Skip for now
-                              </button>
-                            )}
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Live Preview CTA Overlay */}
-                  {editCtaEnabled && editCtas.filter(cta => currentTime >= cta.startTime && currentTime <= (cta.startTime + cta.duration)).map(cta => {
-                    let left = cta.leftPercent;
-                    let top = cta.topPercent;
-
-                    // Fallback for legacy DB entries that only have cta.position set
-                    if (left === undefined || top === undefined) {
-                      const pos = cta.position || 'bottom-center';
-                      if (pos === 'top-center') { left = 50; top = 16; }
-                      else if (pos === 'bottom-left') { left = 12; top = 84; }
-                      else if (pos === 'bottom-right') { left = 88; top = 84; }
-                      else if (pos === 'top-left') { left = 12; top = 16; }
-                      else if (pos === 'top-right') { left = 88; top = 16; }
-                      else if (pos === 'center-center') { left = 50; top = 50; }
-                      else { left = 50; top = 84; } // bottom-center
-                    }
-
-                    return (
-                      <div 
-                        key={cta.id} 
-                        onMouseDown={canDragCtaInPreview ? (e) => handleCtaMouseDown(e, cta.id) : undefined}
-                        style={{
-                          left: `${left}%`,
-                          top: `${top}%`,
-                          transform: 'translate(-50%, -50%)',
-                        }}
-                        className={[
-                          'absolute z-20 select-none transition-opacity duration-100',
-                          canDragCtaInPreview ? 'cursor-move active:opacity-80' : 'cursor-default',
-                        ].join(' ')}
-                        title={
-                          canDragCtaInPreview
-                            ? 'Drag button to place anywhere on video'
-                            : 'Pause the video and use the CTA tab to reposition'
-                        }
-                      >
-                        <a
-                          href={cta.url ? (cta.url.startsWith('http://') || cta.url.startsWith('https://') ? cta.url : `https://${cta.url}`) : '#'}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => {
-                            if (canDragCtaInPreview) e.preventDefault();
-                          }}
-                          style={{ 
-                            backgroundColor: cta.bgColor || editPrimaryColor || '#F97316', 
-                            color: cta.textColor || '#ffffff',
-                            borderRadius: `${cta.borderRadius ?? 30}px`,
-                            borderWidth: `${cta.borderWidth ?? 0}px`,
-                            borderColor: cta.borderColor || '#ffffff',
-                            borderStyle: (cta.borderWidth ?? 0) > 0 ? 'solid' : 'none',
-                            pointerEvents: canDragCtaInPreview ? 'none' : 'auto'
-                          }}
-                          className="px-5 py-2.5 font-extrabold text-[11px] shadow-xl tracking-wider uppercase inline-block text-center whitespace-nowrap"
-                        >
-                          {cta.text}
-                        </a>
-                      </div>
-                    );
-                  })}
-                </>
-              ) : (
-                <div className="text-center flex flex-col items-center justify-center h-full space-y-4">
-                  <p className="text-xs font-semibold text-[hsl(var(--muted))]">Processing…</p>
-                  <div className="space-y-1">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Generating Stream...</p>
-                  </div>
-                </div>
-              )}
+              <CustomVideoPlayer
+                videoId={video.id}
+                workspaceId={video.workspaceId}
+                status={video.status}
+                posterUrl={thumbnailFor(video, posterPreviewKey)}
+                hlsManifestUrl={resolveMediaUrl(video.hlsManifestUrl) ?? video.hlsManifestUrl}
+                originalMp4Url={(video as any).originalMp4Url}
+                captionsUrl={(() => {
+                  const base = resolveMediaUrl(video.captionsUrl);
+                  if (!base) return undefined;
+                  return `${base}${base.includes('?') ? '&' : '?'}t=${captionsPreviewKey}`;
+                })()}
+                isLivePreview={true}
+                onCtaMouseDown={(e, ctaId) => handleCtaMouseDown(e, ctaId)}
+                onPlayStateChange={(playing) => setIsPlaying(playing)}
+                onAspectRatioChange={setAspectRatio}
+                onDurationChange={setDuration}
+                settings={{
+                  autoplay: editAutoplay || editBgVideo,
+                  loop: editLoop || editBgVideo,
+                  muted: editMuted || editAutoplay || editBgVideo,
+                  controlsStyle: editControlsStyle,
+                  primaryColor: editPrimaryColor,
+                  bgColor: editBgColor,
+                  captionBgColor: editCaptionBgColor,
+                  captionTextColor: editCaptionTextColor,
+                  captionFontFamily: editCaptionFontFamily,
+                  captionFontSize: editCaptionFontSize,
+                  downloadEnabled: editDownloadEnabled,
+                  formEnabled: editFormEnabled,
+                  formTime: editFormTime,
+                  formTitle: editFormTitle,
+                  formDescription: editFormDescription,
+                  formThankYouMessage: editFormThankYouMessage,
+                  formButtonText: editFormButtonText,
+                  formButtonColor: editFormButtonColor,
+                  formButtonTextColor: editFormButtonTextColor,
+                  formTextColor: editFormTextColor,
+                  formBgColor: editFormBgColor,
+                  formAlignment: editFormAlignment,
+                  formSkipEnabled: editFormSkipEnabled,
+                  formRequireConsent: editFormRequireConsent,
+                  formConsentText: editFormConsentText,
+                  formOverlayOpacity: editFormOverlayOpacity,
+                  formCardOpacity: editFormCardOpacity,
+                  formFieldBgColor: editFormFieldBgColor,
+                  formFieldBorderColor: editFormFieldBorderColor,
+                  formUseThemeColors: editFormUseThemeColors,
+                  formFontFamily: editFormFontFamily,
+                  formFields: editFormFields,
+                  ctaEnabled: editCtaEnabled,
+                  ctas: editCtas,
+                  clickToPlay: editClickToPlay,
+                  startInView: editStartInView,
+                  playInline: editPlayInline,
+                  bgVideo: editBgVideo,
+                  playFromStartFullscreen: editPlayFromStartFullscreen,
+                  brandingEnabled: editBrandingEnabled,
+                  brandingLogoUrl: editBrandingLogoUrl,
+                  brandingPosition: editBrandingPosition,
+                  brandingSize: editBrandingSize,
+                  keyboardShortcuts: editKeyboardShortcuts,
+                  showExitThumbnail: editShowExitThumbnail,
+                  playButtonStyle: editPlayButtonStyle,
+                  playButtonIconUrl: editPlayButtonIconUrl,
+                  playButtonText: editPlayButtonText,
+                  showLargePlayButton: editShowLargePlayButton,
+                  playButtonSize: editPlayButtonSize,
+                  playButtonBorderWidth: editPlayButtonBorderWidth,
+                  playButtonBorderColor: editPlayButtonBorderColor,
+                  playButtonIconScale: editPlayButtonIconScale,
+                  playButtonBgTransparent: editPlayButtonBgTransparent,
+                  showPlayPause: editShowPlayPause,
+                  showProgress: editShowProgress,
+                  showCurrentTime: editShowCurrentTime,
+                  showMute: editShowMute,
+                  showVolume: editShowVolume,
+                  showSettings: editShowSettings,
+                  showFullscreen: editShowFullscreen,
+                  showPlaybackSpeed: editShowPlaybackSpeed,
+                  showSelectQuality: editShowSelectQuality,
+                  showCaptionsControl: editShowCaptionsControl,
+                  theme: editTheme,
+                }}
+              />
             </div>
           </div>
 
         </section>
 
+        </div>
       </div>
-
+      
+      <ShareModal 
+        video={video}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        notifySuccess={notifySuccess}
+      />
     </div>
   );
 }

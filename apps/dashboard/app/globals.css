@@ -4,25 +4,29 @@
 
 @layer base {
   :root {
-    --background: 0 0% 98%;
+    --background: 210 29% 97%; /* #F6F8FA */
     --canvas: 0 0% 100%;
-    --foreground: 240 6% 10%;
-    --surface: 0 0% 100%;
-    --sidebar: 240 5% 96%;
-    --muted: 240 4% 46%;
-    --hairline: 240 6% 91%;
-    --accent: 245 88% 58%;
+    --foreground: 240 10% 12%;
+    --surface: 0 0% 100%; /* #FFFFFF for cards */
+    --sidebar: 210 29% 97%; /* #F6F8FA */
+    --muted: 240 5% 45%;
+    --hairline: 240 5% 92%;
+    --accent: 252 82% 65%; /* Soft purple */
     --accent-foreground: 0 0% 100%;
-    --accent-muted: 245 60% 96%;
-    --accent-border: 245 50% 88%;
+    --accent-muted: 252 82% 96%;
+    --accent-border: 252 82% 88%;
   }
 
   body {
     @apply bg-[hsl(var(--background))] text-[hsl(var(--foreground))] font-sans antialiased;
   }
 
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-medium;
+  }
+
   ::selection {
-    @apply bg-[hsl(var(--foreground))] text-white;
+    @apply bg-[hsl(var(--accent))] text-white;
   }
 }
 
@@ -191,7 +195,7 @@
   }
 
   .dashboard-panel {
-    @apply overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))];
+    @apply overflow-hidden bg-transparent;
   }
 
   .icon-button {
@@ -419,31 +423,29 @@
   }
 
   .detail-subheader {
-    @apply flex flex-col justify-between border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] px-6 py-4 md:flex-row md:items-center md:px-8;
+    @apply flex flex-col justify-between bg-[#F6F8FA] px-6 py-4 md:flex-row md:items-center md:px-8;
   }
 
-  .detail-sidebar {
-    @apply w-full flex-shrink-0 overflow-y-auto overflow-x-hidden border-r border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-4 [scrollbar-gutter:stable] lg:w-60 lg:min-w-[15rem] lg:max-w-[15rem] lg:p-6;
-  }
+  /* .detail-sidebar removed for horizontal top tabs */
 
   .detail-editor {
-    @apply w-full flex-shrink-0 overflow-y-auto overflow-x-hidden border-r border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-6 [scrollbar-gutter:stable] lg:w-[440px] lg:min-w-[440px] lg:max-w-[440px] lg:p-8;
+    @apply w-full flex-shrink-0 overflow-y-auto overflow-x-hidden bg-[#F6F8FA] p-6 [scrollbar-gutter:stable] lg:w-[30%] lg:p-8;
   }
 
   .detail-preview {
-    @apply flex min-w-0 flex-1 flex-col items-center justify-center bg-[hsl(var(--sidebar))] p-6 [scrollbar-gutter:stable] lg:h-full lg:overflow-y-auto lg:overflow-x-hidden lg:p-10;
+    @apply flex min-w-0 w-full flex-col items-center justify-center bg-[#F6F8FA] p-6 [scrollbar-gutter:stable] lg:h-full lg:overflow-y-auto lg:overflow-x-hidden lg:w-[70%] lg:p-10;
   }
 
   .detail-tab {
-    @apply box-border w-full rounded-lg border border-transparent px-3 py-2 text-left text-xs font-semibold transition-colors duration-150;
+    @apply inline-flex shrink-0 items-center justify-center rounded-full px-4 py-2 text-[13px] font-bold transition-all whitespace-nowrap;
   }
 
   .detail-tab-active {
-    @apply border-transparent bg-[hsl(var(--accent-muted))] text-[hsl(var(--accent))];
+    @apply bg-white text-gray-900 shadow-sm ring-1 ring-gray-900/5;
   }
 
   .detail-tab-idle {
-    @apply border-transparent bg-transparent text-[hsl(var(--muted))] hover:bg-[hsl(var(--sidebar))] hover:text-[hsl(var(--foreground))];
+    @apply text-gray-500 hover:text-gray-900 hover:bg-black/5;
   }
 
   /* Accent actions: color-only hover (no filter/shadow/scale layout jitter) */
@@ -456,7 +458,7 @@
   }
 
   .detail-field {
-    @apply w-full rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] px-3.5 py-2.5 text-xs font-semibold text-[hsl(var(--foreground))] outline-none focus:border-[hsl(var(--accent))] focus:ring-4 focus:ring-[hsl(var(--accent)/0.15)];
+    @apply w-full rounded-lg border-transparent bg-[#f3f4f6] px-3.5 py-2.5 text-[13px] font-medium text-[hsl(var(--foreground))] outline-none transition-colors focus:bg-[#e5e7eb];
   }
 
   .detail-field-sm {
@@ -488,32 +490,32 @@
     @apply absolute right-0 bottom-0 w-full overflow-hidden rounded-lg border border-white/[0.14] text-white shadow-[0_18px_44px_-14px_rgba(0,0,0,0.55)];
     background: linear-gradient(
       125deg,
-      rgba(6, 6, 10, 0.92) 0%,
-      rgba(12, 18, 42, 0.82) 42%,
+      rgba(0, 0, 0, 0.92) 0%,
+      rgba(0, 0, 0, 0.82) 42%,
       hsl(var(--accent) / 0.78) 100%
     );
     -webkit-backdrop-filter: blur(18px) saturate(1.35);
     backdrop-filter: blur(18px) saturate(1.35);
     box-shadow:
       0 18px 44px -14px rgba(0, 0, 0, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      inset 0 1px 0 rgba(0, 0, 0, 0.12);
   }
 
   .toast-glass--success {
     background: linear-gradient(
       125deg,
-      rgba(6, 10, 8, 0.92) 0%,
-      rgba(10, 32, 28, 0.82) 45%,
-      rgba(16, 185, 129, 0.75) 100%
+      rgba(0, 0, 0, 0.92) 0%,
+      rgba(0, 0, 0, 0.82) 45%,
+      rgba(0, 0, 0, 0.75) 100%
     );
   }
 
   .toast-glass--error {
     background: linear-gradient(
       125deg,
-      rgba(12, 6, 8, 0.92) 0%,
-      rgba(42, 14, 18, 0.82) 45%,
-      rgba(239, 68, 68, 0.72) 100%
+      rgba(0, 0, 0, 0.92) 0%,
+      rgba(0, 0, 0, 0.82) 45%,
+      rgba(0, 0, 0, 0.72) 100%
     );
   }
 
@@ -595,25 +597,11 @@
   }
 
   .notification-list-item {
-    @apply relative flex gap-3 px-4 py-3 pl-[1.125rem];
-  }
-
-  .notification-list-item::before {
-    content: '';
-    @apply absolute bottom-2 left-0 top-2 w-[2px] rounded-r-full;
-    background: hsl(var(--accent));
-  }
-
-  .notification-list-item--success::before {
-    background: linear-gradient(180deg, #6ee7b7, #10b981);
-  }
-
-  .notification-list-item--error::before {
-    background: linear-gradient(180deg, #fca5a5, #ef4444);
+    @apply relative flex gap-3 px-4 py-3 hover:bg-[#fafafa] transition-colors cursor-default;
   }
 
   .notification-list-item--unread {
-    @apply bg-[hsl(var(--accent-muted)/0.45)];
+    @apply bg-[#f6f8fa];
   }
 
   .notification-list-title {
