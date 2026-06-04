@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import type { Video } from '@framevid/types';
 import { Logo } from '../components/brand/Logo';
 import { ProfileMenu } from '../components/dashboard/ProfileMenu';
-import { WorkspaceSwitcher } from '../components/dashboard/WorkspaceSwitcher';
 import { VideoGridCard } from '../components/dashboard/VideoGridCard';
 import { NotificationPanel } from '../components/notifications/NotificationPanel';
 import { useNotifications } from '../components/notifications/NotificationProvider';
