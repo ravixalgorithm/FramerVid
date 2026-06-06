@@ -56,6 +56,7 @@ export function CustomVideoPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsInstanceRef = useRef<any>(null);
   const isPlayingRef = useRef(false);
+  const isDraggingRef = useRef(false);
 
   // Register seek function with parent
   useEffect(() => {
@@ -292,6 +293,7 @@ export function CustomVideoPlayer({
   };
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    if (isDraggingRef.current) return;
     const currentT = e.currentTarget.currentTime;
     setCurrentTime(currentT);
     
@@ -334,16 +336,6 @@ export function CustomVideoPlayer({
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isLivePreview) {
-      // In dashboard preview, mock the submission
-      setFormVisible(false);
-      setFormSubmitted(true);
-      setShowThankYou(true);
-      setTimeout(() => setShowThankYou(false), 1600);
-      if (formTime !== 'post-roll') videoRef.current?.play().catch(() => {});
-      return;
-    }
-
     setFormError(null);
     setFormSubmitting(true);
     try {
@@ -354,7 +346,10 @@ export function CustomVideoPlayer({
       const res = await fetch(`/api/videos/${videoId}/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: payloadFields, source: 'shared-player' }),
+        body: JSON.stringify({ 
+          fields: payloadFields, 
+          source: isLivePreview ? 'editor-preview' : 'shared-player' 
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || 'Failed to submit form');
@@ -373,7 +368,19 @@ export function CustomVideoPlayer({
         videoRef.current?.play().catch(() => {});
       }
     } catch (err: any) {
-      setFormError(err?.message || 'Failed to submit');
+      if (isLivePreview) {
+        // Fallback to mock behavior in preview editor if database write fails (e.g. offline testing)
+        console.warn('Preview lead capture failed, falling back to mock:', err);
+        setShowThankYou(true);
+        setTimeout(() => setShowThankYou(false), 1600);
+        setFormVisible(false);
+        setFormSubmitted(true);
+        if (formTime !== 'post-roll') {
+          videoRef.current?.play().catch(() => {});
+        }
+      } else {
+        setFormError(err?.message || 'Failed to submit');
+      }
     } finally {
       setFormSubmitting(false);
     }
@@ -497,46 +504,67 @@ export function CustomVideoPlayer({
                     className="relative w-full h-5 flex items-center cursor-pointer group/scrub"
                     onMouseDown={(e) => {
                       e.preventDefault();
+                      isDraggingRef.current = true;
                       const scrubBar = e.currentTarget;
+                      const vid = videoRef.current;
+                      const wasPlaying = vid && !vid.paused;
+                      if (wasPlaying && vid) vid.pause();
+
+                      let rafId: number;
+                      let lastVideoSeek = 0;
                       const scrubTo = (clientX: number) => {
                         const rect = scrubBar.getBoundingClientRect();
                         const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
                         const time = pct * (duration || 100);
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = time;
-                          setCurrentTime(time);
+                        setCurrentTime(time);
+                        const now = Date.now();
+                        if (vid && now - lastVideoSeek > 60) {
+                          vid.currentTime = time;
+                          lastVideoSeek = now;
                         }
                       };
                       scrubTo(e.clientX);
-                      const onMove = (ev: MouseEvent) => scrubTo(ev.clientX);
-                      const onUp = () => {
+                      const onMove = (ev: MouseEvent) => {
+                        if (rafId) cancelAnimationFrame(rafId);
+                        rafId = requestAnimationFrame(() => scrubTo(ev.clientX));
+                      };
+                      const onUp = (ev: MouseEvent) => {
+                        isDraggingRef.current = false;
+                        if (rafId) cancelAnimationFrame(rafId);
+                        const rect = scrubBar.getBoundingClientRect();
+                        const pct = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                        const time = pct * (duration || 100);
+                        setCurrentTime(time);
+                        if (vid) vid.currentTime = time;
                         document.removeEventListener('mousemove', onMove);
                         document.removeEventListener('mouseup', onUp);
+                        if (wasPlaying && vid) vid.play().catch(() => {});
                       };
                       document.addEventListener('mousemove', onMove);
                       document.addEventListener('mouseup', onUp);
                     }}
                   >
-                    <div className={`absolute left-0 right-0 rounded-full transition-all ${
+                    <div className={`absolute left-0 right-0 rounded-full ${
                       theme === 'minimal' ? 'h-[2px] bg-white/30 group-hover/scrub:h-[3px]' :
                       theme === 'gradient' ? 'h-[3px] bg-white/20 group-hover/scrub:h-[5px]' :
                       theme === 'outlined' ? 'h-[3px] bg-white/15 group-hover/scrub:h-[4px]' :
                       theme === 'floating' ? 'h-[2px] bg-white/20 group-hover/scrub:h-[4px]' :
                       'h-[3px] bg-white/20 group-hover/scrub:h-[5px]'
-                    }`} />
-                    <div className={`absolute left-0 rounded-full transition-all ${
+                    }`} style={{ transition: 'height 0.15s ease' }} />
+                    <div className={`absolute left-0 rounded-full ${
                       theme === 'minimal' ? 'h-[2px] group-hover/scrub:h-[3px]' :
                       theme === 'gradient' ? 'h-[3px] group-hover/scrub:h-[5px]' :
                       theme === 'outlined' ? 'h-[3px] group-hover/scrub:h-[4px]' :
                       theme === 'floating' ? 'h-[2px] group-hover/scrub:h-[4px]' :
                       'h-[3px] group-hover/scrub:h-[5px]'
                     }`} style={{
+                      transition: 'height 0.15s ease',
                       width: `${duration ? (currentTime / duration) * 100 : 0}%`,
                       backgroundColor: primaryColor,
                       ...(theme === 'gradient' ? { boxShadow: `0 0 8px ${primaryColor}80` } : {})
                     }} />
                     {theme !== 'minimal' && theme !== 'floating' && (
-                      <div className="absolute w-3 h-3 rounded-full shadow-md opacity-0 group-hover/scrub:opacity-100 transition-opacity -translate-x-1/2" style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%`, backgroundColor: primaryColor }} />
+                      <div className="absolute w-3 h-3 rounded-full shadow-md opacity-0 group-hover/scrub:opacity-100 -translate-x-1/2" style={{ transition: 'opacity 0.15s ease', left: `${duration ? (currentTime / duration) * 100 : 0}%`, backgroundColor: primaryColor }} />
                     )}
                   </div>
                 </div>
@@ -646,8 +674,11 @@ export function CustomVideoPlayer({
               <div
                 key={cta.id}
                 onMouseDown={(e) => onCtaMouseDown?.(e, cta.id)}
-                className="absolute z-30 transition-transform shadow-xl flex items-center justify-center font-bold px-5 py-2.5"
+                className={`absolute z-30 transition-transform shadow-xl flex items-center justify-center font-bold px-5 py-2.5 whitespace-nowrap ${
+                  isLivePreview && settings.activeTab === 'cta' ? 'cursor-move' : 'cursor-pointer'
+                }`}
                 style={{
+                  whiteSpace: 'nowrap',
                   backgroundColor: cta.bgColor || primaryColor,
                   color: cta.textColor || '#ffffff',
                   borderRadius: `${cta.borderRadius || 30}px`,
@@ -665,8 +696,21 @@ export function CustomVideoPlayer({
                       cta.position === 'center-center' ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' } : {})
                 }}
                 onClick={(e) => {
-                  if (isLivePreview) e.preventDefault();
-                  else if (cta.url) window.open(cta.url, '_blank');
+                  e.stopPropagation(); // Stop click from triggering parent video toggle play
+                  
+                  // In live preview, only open the link if we are not actively editing CTAs (to avoid opening links during drag & drop positioning)
+                  const isEditingCta = isLivePreview && settings.activeTab === 'cta';
+                  if (!isEditingCta && cta.url) {
+                    try {
+                      let targetUrl = cta.url;
+                      if (!/^https?:\/\//i.test(targetUrl)) {
+                        targetUrl = `https://${targetUrl}`;
+                      }
+                      window.open(targetUrl, '_blank');
+                    } catch (err) {
+                      console.error('Failed to open CTA URL:', err);
+                    }
+                  }
                 }}
               >
                 {cta.text}
@@ -730,7 +774,7 @@ export function CustomVideoPlayer({
                       <button
                         type="submit"
                         disabled={formSubmitting}
-                        className="w-full py-3 px-4 rounded-xl font-bold text-[15px] transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 flex justify-center items-center"
+                        className="w-full py-3 px-4 rounded-xl font-bold text-[15px] transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex justify-center items-center cursor-pointer"
                         style={{ backgroundColor: formButtonColor, color: formButtonTextColor }}
                       >
                         {formSubmitting ? (
@@ -749,7 +793,7 @@ export function CustomVideoPlayer({
                             videoRef.current?.play().catch(() => {});
                           }
                         }}
-                        className="w-full text-center text-[13px] font-medium opacity-60 hover:opacity-100 transition-opacity mt-2"
+                        className="w-full text-center text-[13px] font-medium opacity-60 hover:opacity-100 transition-opacity mt-2 cursor-pointer"
                         style={{ color: formTextColor }}
                       >
                         Skip for now

@@ -1,17 +1,17 @@
-import youtubedl from 'youtube-dl-exec';
+const youtubedl = require('youtube-dl-exec');
 
 async function test() {
   try {
     console.log("Fetching format info...");
     const info = await youtubedl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {
       dumpJson: true,
-      noWarnings: true,
+      noWarnings: false,
       extractorArgs: 'youtube:player_client=android,web',
     });
     
     console.log("Available formats:");
-    info.formats.filter(f => f.vcodec !== 'none').forEach(f => {
-      console.log(`${f.format_id} - ${f.ext} - ${f.resolution || f.width + 'x' + f.height} - ${f.format_note} - ${f.acodec !== 'none' ? 'audio' : 'video-only'}`);
+    info.formats.forEach(f => {
+      console.log(`${f.format_id} - ${f.ext} - ${f.resolution || f.width + 'x' + f.height} - ${f.format_note}`);
     });
     
     console.log("\nBest video format: ", info.format);

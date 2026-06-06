@@ -489,6 +489,7 @@ worker.on('failed', (job, err) => {
 });
 
 worker.on('error', (err) => {
+  if ((err as any).code === 'ECONNRESET') return;
   console.error('[Worker] Transcode queue error:', err);
 });
 
@@ -518,7 +519,6 @@ async function processImportJob(job: { data: ImportJobData }) {
       mergeOutputFormat: 'mp4',
       noCheckCertificates: true,
       noWarnings: true,
-      extractorArgs: 'youtube:player_client=android,web',
     });
 
     // Check if the file was downloaded successfully and get its size
@@ -545,7 +545,6 @@ async function processImportJob(job: { data: ImportJobData }) {
       const info: any = await youtubedl(url, { 
         dumpJson: true, 
         noWarnings: true,
-        extractorArgs: 'youtube:player_client=android,web',
       });
       if (info?.title) {
         await db.update(videos).set({ title: info.title, originalFilename: `${info.title}.mp4` }).where(eq(videos.id, videoId));
@@ -601,6 +600,7 @@ importWorker.on('failed', (job, err) => {
 });
 
 importWorker.on('error', (err) => {
+  if ((err as any).code === 'ECONNRESET') return;
   console.error('[Worker] Import queue error:', err);
 });
 

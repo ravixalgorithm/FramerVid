@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, desc } from 'drizzle-orm';
 import { db, leads, videos, computeLeadDedupeKey } from '@framevid/db';
+import { getCurrentUser } from '../../../../lib/auth';
+import { assertWorkspaceAccess } from '../../../../lib/workspace-access';
+
 
 const leadPayloadSchema = z.object({
   fields: z.record(z.string().optional()).default({}),
@@ -151,4 +154,40 @@ export async function POST(req: NextRequest, { params }: { params: { videoId: st
 export async function OPTIONS() {
   return withCors(new NextResponse(null, { status: 204 }));
 }
+
+export async function GET(
+  _req: Request,
+  { params }: { params: { videoId: string } }
+) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
+    }
+
+    const { videoId } = params;
+    const [video] = await db.select().from(videos).where(eq(videos.id, videoId)).limit(1);
+    if (!video) {
+      return NextResponse.json({ error: 'Video not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    const membership = await assertWorkspaceAccess(user.id, video.workspaceId);
+    if (!membership) {
+      return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
+    }
+
+    const leadsList = await db
+      .select()
+      .from(leads)
+      .where(eq(leads.videoId, videoId))
+      .orderBy(desc(leads.createdAt));
+
+    return NextResponse.json({ data: leadsList });
+  } catch (error: any) {
+    console.error('Failed to fetch leads:', error);
+    const message = error instanceof Error ? error.message : 'Internal error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 

@@ -13,6 +13,14 @@ const VideoAnalytics = dynamic(() => import('./VideoAnalytics'), {
     </div>
   ),
 });
+const VideoLeads = dynamic(() => import('./VideoLeads'), {
+  ssr: false,
+  loading: () => (
+    <div className="py-8 text-center text-[11px] font-medium text-[hsl(var(--muted))]">
+      Loading leads…
+    </div>
+  ),
+});
 import { Logo } from '@/components/brand/Logo';
 import { ProfileMenu } from '@/components/dashboard/ProfileMenu';
 import {
@@ -47,6 +55,7 @@ type TabType =
   | 'play-button'
   | 'cta'
   | 'form'
+  | 'leads'
   | 'subtitles'
   | 'danger';
 
@@ -1254,7 +1263,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
     <div className="dash-shell font-sans">
       
       {/* VIMEO-STYLE SINGLE HEADER */}
-      <header className="flex h-16 items-center justify-between px-4 sm:px-6 bg-[#F6F8FA] z-40 relative">
+      <header className="flex h-16 items-center justify-between px-4 sm:px-6 bg-white z-40 relative">
         <div className="flex items-center gap-4">
           <button type="button" onClick={() => router.push('/')} className="cursor-pointer transition-opacity hover:opacity-85 mr-2">
             <Logo />
@@ -1392,7 +1401,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
       <div className="flex flex-1 flex-col h-[calc(100vh-64px)] overflow-hidden">
         
         {/* HORIZONTAL TABS BAR */}
-        <div className="bg-[#F6F8FA] px-4 sm:px-8 py-3 flex gap-2 overflow-x-auto no-scrollbar shrink-0 items-center">
+        <div className="bg-[#EAECEE] px-4 sm:px-8 pt-3 flex gap-4 overflow-x-auto no-scrollbar shrink-0 items-end">
           {[
             { id: 'analytics', label: 'Analytics' },
             { id: 'metadata', label: 'Metadata' },
@@ -1403,6 +1412,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
             { id: 'play-button', label: 'Play button' },
             { id: 'cta', label: 'Call to action' },
             { id: 'form', label: 'Form' },
+            { id: 'leads', label: 'Leads' },
             { id: 'subtitles', label: 'Subtitles' },
             { id: 'danger', label: 'Danger Zone' },
           ].map((tab) => {
@@ -1420,7 +1430,7 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
         </div>
 
         {/* CONTENT SPLIT (50/50) */}
-        <div className="flex flex-1 flex-col lg:flex-row overflow-hidden bg-[#F6F8FA]">
+        <div className="flex flex-1 flex-col lg:flex-row overflow-hidden bg-white">
           
           {/* COLUMN 1: TAB EDIT FORMS */}
           <section className="detail-editor">
@@ -3699,8 +3709,15 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
               </div>
             )}
 
+            {/* Leads Tab */}
+            {activeTab === 'leads' && (
+              <div className="border-t border-[hsl(var(--hairline))] pt-2">
+                <VideoLeads videoId={video.id} />
+              </div>
+            )}
+
             {/* SAVE BUTTON FOR CONFIG FORM */}
-            {activeTab !== 'analytics' && activeTab !== 'danger' && (
+            {activeTab !== 'analytics' && activeTab !== 'danger' && activeTab !== 'leads' && (
               <div className="pt-4 border-t border-gray-150">
                 <button
                   onClick={handleSaveConfig}
@@ -3845,8 +3862,33 @@ export default function VideoDetailsClient({ initialVideo, user, workspace }: Cl
                   showSelectQuality: editShowSelectQuality,
                   showCaptionsControl: editShowCaptionsControl,
                   theme: editTheme,
+                  activeTab: activeTab,
                 }}
               />
+            </div>
+          </div>
+
+          {/* Static Video Details Below Preview */}
+          <div className="w-full max-w-4xl mx-auto mt-4 px-4 py-3 bg-white border border-gray-100 rounded-xl flex items-center justify-around text-xs font-medium text-gray-500 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-0.5">Duration</span>
+              <span className="text-gray-800 font-semibold">{formatDuration(duration || video.durationSeconds || 0)}</span>
+            </div>
+            <div className="h-8 w-px bg-gray-100"></div>
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-0.5">Uploaded</span>
+              <span className="text-gray-800 font-semibold">{new Date(video.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+            </div>
+            <div className="h-8 w-px bg-gray-100"></div>
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-0.5">Status</span>
+              <span className="text-gray-800 font-semibold capitalize">
+                {video.status === 'ready' ? (
+                  <span className="text-emerald-600 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Ready</span>
+                ) : (
+                  <span className="text-amber-600 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> {video.status}</span>
+                )}
+              </span>
             </div>
           </div>
 

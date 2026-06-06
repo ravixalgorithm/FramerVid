@@ -1,5 +1,5 @@
 type LogoProps = {
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'xl';
   variant?: 'default' | 'inverse';
   className?: string;
 };

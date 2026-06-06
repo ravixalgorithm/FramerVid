@@ -102,3 +102,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, { status: 401 });
+    }
+
+    const folderId = req.nextUrl.searchParams.get('id');
+    if (!folderId) {
+      return NextResponse.json(
+        { error: 'Folder ID query param required', code: 'VALIDATION_ERROR' },
+        { status: 400 }
+      );
+    }
+
+    const [folder] = await db.select().from(folders).where(eq(folders.id, folderId)).limit(1);
+    if (!folder) {
+      return NextResponse.json({ error: 'Folder not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    if (!(await assertWorkspaceAccess(user.id, folder.workspaceId, ['admin', 'editor']))) {
+      return NextResponse.json({ error: 'Forbidden', code: 'FORBIDDEN' }, { status: 403 });
+    }
+
+    await db.delete(folders).where(eq(folders.id, folderId));
+
+    return NextResponse.json({ data: { success: true } });
+  } catch (error: unknown) {
+    console.error('DELETE folder failed:', error);
+    return NextResponse.json({ error: 'Internal Server Error', code: 'INTERNAL_ERROR' }, { status: 500 });
+  }
+}

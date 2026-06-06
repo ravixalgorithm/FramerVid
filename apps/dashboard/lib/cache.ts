@@ -24,7 +24,8 @@ function getCache(): Redis | null {
       enableOfflineQueue: false,
     });
 
-    cacheClient.on('error', (err) => {
+    cacheClient.on('error', (err: any) => {
+      if (err.code === 'ECONNRESET') return;
       console.warn('[Cache] Redis error (non-fatal):', err.message);
     });
   }
